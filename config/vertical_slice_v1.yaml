@@ -1,0 +1,1447 @@
+# =============================================================================
+# VERTICAL SLICE V1 - SENSOR RECORDING & OFFLINE TRACK RECONSTRUCTION
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# SUBORDINATION STATEMENT:
+#   This specification is STRICTLY SUBORDINATE to:
+#     - MASTER PROMPT
+#     - mobile_runtime_profile.yaml
+#     - sensor_reality_model.yaml
+#     - track_creation_pipeline.yaml
+#     - geometry_builder.yaml
+#   It may NOT contradict, weaken, or override any rule defined there.
+#
+# PURPOSE:
+#   Design the FIRST THIN VERTICAL SLICE.
+#   Prove the system is REAL, not complete.
+#   End-to-end: Record → Reconstruct → Segment → Visualize
+#
+# PHILOSOPHY:
+#   Simple. Boring. Explainable.
+#   If it's clever, it's wrong.
+#   If it's not testable, it doesn't exist.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "VERTICAL_SLICE"
+slice_number: 1
+
+# =============================================================================
+# SECTION 1: SCOPE DEFINITION
+# =============================================================================
+
+scope:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 WHAT THIS SLICE DOES
+  # ---------------------------------------------------------------------------
+  in_scope:
+    
+    - capability: "Record raw sensor data on real device"
+      details:
+        - "GPS: latitude, longitude, speed, accuracy, timestamp"
+        - "IMU: gyroscope yaw rate, lateral acceleration, timestamp"
+        - "Orientation metadata"
+        - "Save locally as structured file"
+        
+    - capability: "Reconstruct single lap offline"
+      details:
+        - "Smooth GPS noise"
+        - "Fuse GPS + IMU for improved trajectory"
+        - "Build centerline from fused data"
+        - "Compute cumulative distance along track"
+        
+    - capability: "Segment the track"
+      details:
+        - "Fixed-distance segmentation (5-10m)"
+        - "Compute curvature per segment"
+        
+    - capability: "Visualize results"
+      details:
+        - "Plot reconstructed track (2D)"
+        - "Overlay speed along track (color-coded)"
+        - "Plot curvature vs distance"
+        
+  # ---------------------------------------------------------------------------
+  # 1.2 WHAT THIS SLICE DOES NOT DO
+  # ---------------------------------------------------------------------------
+  out_of_scope:
+    
+    # Explicitly NOT built in V1
+    not_built:
+      
+      - feature: "Real-time coaching"
+        reason: "Requires validated envelopes, not proven yet"
+        when: "V3+"
+        
+      - feature: "Voice output"
+        reason: "Requires attention model and arbitration"
+        when: "V4+"
+        
+      - feature: "Deviation detection"
+        reason: "Requires baseline envelopes"
+        when: "V3+"
+        
+      - feature: "Adaptive learning (AER)"
+        reason: "Requires multiple validated laps"
+        when: "V5+"
+        
+      - feature: "AI/ML of any kind"
+        reason: "Classical signal processing only in V1"
+        when: "Never for core safety"
+        
+      - feature: "Cloud connectivity"
+        reason: "Offline-only operation"
+        when: "Optional, never required"
+        
+      - feature: "Multi-lap fusion"
+        reason: "Single lap reconstruction first"
+        when: "V2"
+        
+      - feature: "Track width estimation"
+        reason: "Centerline only in V1"
+        when: "V2+"
+        
+      - feature: "Controllability envelopes"
+        reason: "Geometry validation first"
+        when: "V2"
+        
+      - feature: "Lap timing"
+        reason: "Requires start/finish detection"
+        when: "V2"
+        
+      - feature: "Session management"
+        reason: "Single recording in V1"
+        when: "V2"
+
+# =============================================================================
+# SECTION 2: MINIMAL APP ARCHITECTURE
+# =============================================================================
+
+architecture:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 MODULE OVERVIEW
+  # ---------------------------------------------------------------------------
+  modules:
+    
+    # -------------------------------------------------------------------------
+    # RECORDING MODULE (Mobile App - Runtime)
+    # -------------------------------------------------------------------------
+    recording:
+      
+      name: "SensorRecorder"
+      platform: "Android (primary) / iOS (secondary)"
+      
+      responsibilities:
+        - "Acquire GPS samples at highest available rate"
+        - "Acquire IMU samples at 50+ Hz"
+        - "Timestamp all samples consistently"
+        - "Buffer samples in memory"
+        - "Write to local storage on session end"
+        - "Handle sensor failures gracefully (fail silent)"
+        
+      submodules:
+        
+        gps_reader:
+          description: "Interfaces with platform GPS API"
+          inputs: "Platform location callbacks"
+          outputs: "GPSSample stream"
+          
+        imu_reader:
+          description: "Interfaces with platform sensor API"
+          inputs: "Platform accelerometer/gyroscope callbacks"
+          outputs: "IMUSample stream"
+          
+        sample_buffer:
+          description: "In-memory ring buffer for samples"
+          capacity: "60 seconds of data"
+          overflow: "Extend buffer (recording mode)"
+          
+        file_writer:
+          description: "Writes buffered data to storage"
+          format: "JSON (human-readable) or CSV"
+          trigger: "User stops recording"
+          
+      state_machine:
+        states:
+          - IDLE: "Not recording"
+          - INITIALIZING: "Acquiring sensors"
+          - RECORDING: "Actively capturing"
+          - STOPPING: "Flushing to disk"
+          - ERROR: "Sensor failure"
+          
+    # -------------------------------------------------------------------------
+    # PROCESSING MODULE (Offline - Python Script)
+    # -------------------------------------------------------------------------
+    processing:
+      
+      name: "OfflineProcessor"
+      platform: "Python 3.10+ (desktop)"
+      
+      responsibilities:
+        - "Load recorded sensor data"
+        - "Validate data integrity"
+        - "Smooth GPS trajectory"
+        - "Fuse GPS + IMU"
+        - "Build centerline"
+        - "Compute distance"
+        - "Segment track"
+        - "Compute curvature"
+        
+      submodules:
+        
+        data_loader:
+          description: "Reads recorded files"
+          inputs: "JSON/CSV file path"
+          outputs: "RawSensorData structure"
+          
+        gps_smoother:
+          description: "Applies smoothing filter to GPS"
+          method: "Savitzky-Golay or moving median"
+          inputs: "Raw GPS points"
+          outputs: "Smoothed GPS points"
+          
+        imu_processor:
+          description: "Processes IMU data"
+          method: "Bias removal, integration"
+          inputs: "Raw IMU samples"
+          outputs: "Processed IMU data"
+          
+        sensor_fuser:
+          description: "Fuses GPS + IMU"
+          method: "Complementary filter (simple)"
+          inputs: "Smoothed GPS, processed IMU"
+          outputs: "Fused trajectory"
+          
+        centerline_builder:
+          description: "Builds track centerline"
+          method: "Interpolation to uniform distance"
+          inputs: "Fused trajectory"
+          outputs: "Centerline points"
+          
+        segmenter:
+          description: "Divides track into segments"
+          method: "Fixed distance intervals"
+          inputs: "Centerline"
+          outputs: "Segment list"
+          
+        curvature_computer:
+          description: "Computes curvature per segment"
+          method: "Menger curvature (3-point)"
+          inputs: "Segment points"
+          outputs: "Curvature values"
+          
+    # -------------------------------------------------------------------------
+    # VISUALIZATION MODULE (Offline - Python Script)
+    # -------------------------------------------------------------------------
+    visualization:
+      
+      name: "TrackVisualizer"
+      platform: "Python + Matplotlib"
+      
+      responsibilities:
+        - "Plot 2D track map"
+        - "Color-code by speed"
+        - "Plot curvature vs distance"
+        - "Save plots to image files"
+        
+      outputs:
+        - "track_map.png"
+        - "speed_overlay.png"
+        - "curvature_profile.png"
+        
+  # ---------------------------------------------------------------------------
+  # 2.2 DATA FLOW
+  # ---------------------------------------------------------------------------
+  data_flow:
+    
+    diagram: |
+      
+      ┌─────────────────────────────────────────────────────────────────────┐
+      │                        MOBILE DEVICE                                │
+      │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐ │
+      │  │  GPS API    │    │  IMU API    │    │   Orientation API       │ │
+      │  └──────┬──────┘    └──────┬──────┘    └───────────┬─────────────┘ │
+      │         │                  │                       │               │
+      │         ▼                  ▼                       ▼               │
+      │  ┌──────────────────────────────────────────────────────────────┐  │
+      │  │                   SensorRecorder                             │  │
+      │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │  │
+      │  │  │GPSReader │  │IMUReader │  │ Buffer   │  │ FileWriter   │ │  │
+      │  │  └──────────┘  └──────────┘  └──────────┘  └──────────────┘ │  │
+      │  └──────────────────────────────────────────────────────────────┘  │
+      │                              │                                     │
+      │                              ▼                                     │
+      │                    ┌──────────────────┐                            │
+      │                    │ session_XXXXX.json│                           │
+      │                    └──────────────────┘                            │
+      └─────────────────────────────────────────────────────────────────────┘
+                                     │
+                                     │ (File Transfer)
+                                     ▼
+      ┌─────────────────────────────────────────────────────────────────────┐
+      │                        DESKTOP (Python)                             │
+      │  ┌──────────────────────────────────────────────────────────────┐  │
+      │  │                   OfflineProcessor                           │  │
+      │  │                                                              │  │
+      │  │  session.json ──► DataLoader ──► GPSSmoother ──┐             │  │
+      │  │                                                │             │  │
+      │  │                   IMUProcessor ────────────────┤             │  │
+      │  │                                                ▼             │  │
+      │  │                                          SensorFuser         │  │
+      │  │                                                │             │  │
+      │  │                                                ▼             │  │
+      │  │                                        CenterlineBuilder     │  │
+      │  │                                                │             │  │
+      │  │                                                ▼             │  │
+      │  │                                           Segmenter          │  │
+      │  │                                                │             │  │
+      │  │                                                ▼             │  │
+      │  │                                       CurvatureComputer      │  │
+      │  └──────────────────────────────────────────────────────────────┘  │
+      │                              │                                     │
+      │                              ▼                                     │
+      │  ┌──────────────────────────────────────────────────────────────┐  │
+      │  │                   TrackVisualizer                            │  │
+      │  │                                                              │  │
+      │  │   track_map.png    speed_overlay.png    curvature_profile.png│  │
+      │  └──────────────────────────────────────────────────────────────┘  │
+      └─────────────────────────────────────────────────────────────────────┘
+
+# =============================================================================
+# SECTION 3: DATA SCHEMAS
+# =============================================================================
+
+data_schemas:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 GPS SAMPLE
+  # ---------------------------------------------------------------------------
+  gps_sample:
+    
+    name: "GPSSample"
+    description: "Single GPS measurement"
+    
+    fields:
+      
+      - name: "timestamp_ms"
+        type: "Integer (uint64)"
+        description: "Unix epoch milliseconds"
+        required: true
+        
+      - name: "latitude_deg"
+        type: "Float64"
+        description: "WGS84 latitude in degrees"
+        range: "[-90, 90]"
+        required: true
+        
+      - name: "longitude_deg"
+        type: "Float64"
+        description: "WGS84 longitude in degrees"
+        range: "[-180, 180]"
+        required: true
+        
+      - name: "altitude_m"
+        type: "Float32"
+        description: "Altitude above sea level (if available)"
+        required: false
+        
+      - name: "speed_mps"
+        type: "Float32"
+        description: "Speed from GPS in m/s"
+        range: "[0, 150]"
+        required: true
+        
+      - name: "bearing_deg"
+        type: "Float32"
+        description: "Heading from GPS in degrees [0, 360)"
+        required: false
+        
+      - name: "accuracy_m"
+        type: "Float32"
+        description: "Horizontal accuracy estimate in meters"
+        required: true
+        
+      - name: "satellites"
+        type: "Integer (uint8)"
+        description: "Number of satellites used"
+        required: false
+        
+    json_example: |
+      {
+        "timestamp_ms": 1738512000000,
+        "latitude_deg": 51.507351,
+        "longitude_deg": -0.127758,
+        "altitude_m": 45.2,
+        "speed_mps": 28.5,
+        "bearing_deg": 127.3,
+        "accuracy_m": 3.2,
+        "satellites": 9
+      }
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 IMU SAMPLE
+  # ---------------------------------------------------------------------------
+  imu_sample:
+    
+    name: "IMUSample"
+    description: "Single IMU measurement"
+    
+    fields:
+      
+      - name: "timestamp_ms"
+        type: "Integer (uint64)"
+        description: "Unix epoch milliseconds"
+        required: true
+        
+      - name: "accel_x_mps2"
+        type: "Float32"
+        description: "Acceleration X axis (device frame) in m/s²"
+        required: true
+        
+      - name: "accel_y_mps2"
+        type: "Float32"
+        description: "Acceleration Y axis (device frame) in m/s²"
+        required: true
+        
+      - name: "accel_z_mps2"
+        type: "Float32"
+        description: "Acceleration Z axis (device frame) in m/s²"
+        required: true
+        
+      - name: "gyro_x_rps"
+        type: "Float32"
+        description: "Angular velocity X axis in rad/s"
+        required: true
+        
+      - name: "gyro_y_rps"
+        type: "Float32"
+        description: "Angular velocity Y axis in rad/s"
+        required: true
+        
+      - name: "gyro_z_rps"
+        type: "Float32"
+        description: "Angular velocity Z axis in rad/s (yaw)"
+        required: true
+        
+    json_example: |
+      {
+        "timestamp_ms": 1738512000015,
+        "accel_x_mps2": 0.12,
+        "accel_y_mps2": 8.45,
+        "accel_z_mps2": -4.21,
+        "gyro_x_rps": 0.002,
+        "gyro_y_rps": 0.001,
+        "gyro_z_rps": 0.087
+      }
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 ORIENTATION METADATA
+  # ---------------------------------------------------------------------------
+  orientation_metadata:
+    
+    name: "OrientationMetadata"
+    description: "Device mounting orientation (set once at start)"
+    
+    fields:
+      
+      - name: "device_orientation"
+        type: "Enum"
+        values: ["PORTRAIT", "LANDSCAPE_LEFT", "LANDSCAPE_RIGHT"]
+        description: "How device is oriented in mount"
+        required: true
+        
+      - name: "mount_pitch_deg"
+        type: "Float32"
+        description: "Estimated pitch angle of mount"
+        range: "[-90, 90]"
+        required: false
+        
+      - name: "mount_roll_deg"
+        type: "Float32"
+        description: "Estimated roll angle of mount"
+        range: "[-180, 180]"
+        required: false
+        
+      - name: "gravity_vector"
+        type: "Vector3 (Float32 × 3)"
+        description: "Gravity direction at calibration"
+        required: true
+        
+  # ---------------------------------------------------------------------------
+  # 3.4 SESSION FILE
+  # ---------------------------------------------------------------------------
+  session_file:
+    
+    name: "SessionFile"
+    description: "Complete recorded session"
+    
+    file_format: "JSON"
+    file_naming: "session_{YYYYMMDD}_{HHMMSS}.json"
+    
+    structure:
+      
+      header:
+        - name: "schema_version"
+          type: "String"
+          value: "1.0"
+          
+        - name: "session_id"
+          type: "String (UUID)"
+          
+        - name: "start_timestamp_ms"
+          type: "Integer (uint64)"
+          
+        - name: "end_timestamp_ms"
+          type: "Integer (uint64)"
+          
+        - name: "device_model"
+          type: "String"
+          
+        - name: "os_version"
+          type: "String"
+          
+        - name: "app_version"
+          type: "String"
+          
+        - name: "orientation"
+          type: "OrientationMetadata"
+          
+      data:
+        - name: "gps_samples"
+          type: "Array<GPSSample>"
+          
+        - name: "imu_samples"
+          type: "Array<IMUSample>"
+          
+      footer:
+        - name: "gps_sample_count"
+          type: "Integer"
+          
+        - name: "imu_sample_count"
+          type: "Integer"
+          
+        - name: "duration_seconds"
+          type: "Float32"
+          
+        - name: "checksum"
+          type: "String (SHA256)"
+          
+    full_example: |
+      {
+        "schema_version": "1.0",
+        "session_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "start_timestamp_ms": 1738512000000,
+        "end_timestamp_ms": 1738512180000,
+        "device_model": "Pixel 7 Pro",
+        "os_version": "Android 14",
+        "app_version": "0.1.0",
+        "orientation": {
+          "device_orientation": "LANDSCAPE_LEFT",
+          "mount_pitch_deg": 5.2,
+          "mount_roll_deg": -2.1,
+          "gravity_vector": [0.05, 0.02, -9.78]
+        },
+        "gps_samples": [
+          {"timestamp_ms": 1738512000000, "latitude_deg": 51.507, ...},
+          ...
+        ],
+        "imu_samples": [
+          {"timestamp_ms": 1738512000000, "accel_x_mps2": 0.1, ...},
+          ...
+        ],
+        "gps_sample_count": 180,
+        "imu_sample_count": 9000,
+        "duration_seconds": 180.0,
+        "checksum": "sha256:a1b2c3..."
+      }
+      
+  # ---------------------------------------------------------------------------
+  # 3.5 PROCESSED OUTPUT
+  # ---------------------------------------------------------------------------
+  processed_output:
+    
+    centerline_point:
+      name: "CenterlinePoint"
+      fields:
+        - name: "distance_m"
+          type: "Float64"
+          description: "Cumulative distance from start"
+          
+        - name: "x_m"
+          type: "Float64"
+          description: "Local X coordinate (East)"
+          
+        - name: "y_m"
+          type: "Float64"
+          description: "Local Y coordinate (North)"
+          
+        - name: "heading_rad"
+          type: "Float32"
+          description: "Direction of travel"
+          
+        - name: "speed_mps"
+          type: "Float32"
+          description: "Interpolated speed at this point"
+          
+        - name: "confidence"
+          type: "Float32"
+          description: "Point confidence [0, 1]"
+          
+    segment:
+      name: "TrackSegment"
+      fields:
+        - name: "segment_id"
+          type: "Integer"
+          description: "Segment index"
+          
+        - name: "start_distance_m"
+          type: "Float64"
+          
+        - name: "end_distance_m"
+          type: "Float64"
+          
+        - name: "length_m"
+          type: "Float32"
+          
+        - name: "curvature_mean"
+          type: "Float32"
+          description: "Mean curvature (1/m)"
+          
+        - name: "curvature_max"
+          type: "Float32"
+          description: "Maximum curvature in segment"
+          
+        - name: "speed_mean_mps"
+          type: "Float32"
+          description: "Mean speed through segment"
+          
+        - name: "segment_type"
+          type: "Enum"
+          values: ["STRAIGHT", "CORNER"]
+          description: "Classification based on curvature"
+
+# =============================================================================
+# SECTION 4: PSEUDOCODE
+# =============================================================================
+
+pseudocode:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 SENSOR LOGGING (Mobile App)
+  # ---------------------------------------------------------------------------
+  logging:
+    
+    module: "SensorRecorder"
+    language: "Kotlin/Swift-style pseudocode"
+    
+    initialization: |
+      function initialize():
+          gps_listener = create_gps_listener(
+              min_interval_ms = 100,      # Request 10 Hz
+              min_distance_m = 0          # Every update
+          )
+          
+          imu_listener = create_imu_listener(
+              rate = SENSOR_DELAY_GAME    # ~50 Hz
+          )
+          
+          gps_buffer = create_ring_buffer(capacity = 6000)   # 10 min @ 10 Hz
+          imu_buffer = create_ring_buffer(capacity = 300000) # 10 min @ 50 Hz
+          
+          state = IDLE
+          
+    start_recording: |
+      function start_recording():
+          if state != IDLE:
+              return ERROR_ALREADY_RECORDING
+              
+          # Capture orientation at start
+          orientation = capture_orientation_metadata()
+          if orientation.gravity_vector is INVALID:
+              return ERROR_CALIBRATION_FAILED
+              
+          session_id = generate_uuid()
+          start_time = current_time_ms()
+          
+          # Start sensor listeners
+          register_gps_listener(gps_listener, on_gps_sample)
+          register_imu_listener(imu_listener, on_imu_sample)
+          
+          state = RECORDING
+          return SUCCESS
+          
+    on_gps_sample: |
+      function on_gps_sample(location):
+          if state != RECORDING:
+              return
+              
+          # Validate sample
+          if location.accuracy_m > 25:
+              # Poor accuracy - still record but flag
+              location.quality = LOW
+          else:
+              location.quality = GOOD
+              
+          sample = GPSSample(
+              timestamp_ms = location.timestamp,
+              latitude_deg = location.latitude,
+              longitude_deg = location.longitude,
+              altitude_m = location.altitude,
+              speed_mps = location.speed,
+              bearing_deg = location.bearing,
+              accuracy_m = location.accuracy,
+              satellites = location.satellites
+          )
+          
+          gps_buffer.append(sample)
+          
+    on_imu_sample: |
+      function on_imu_sample(sensor_event):
+          if state != RECORDING:
+              return
+              
+          sample = IMUSample(
+              timestamp_ms = sensor_event.timestamp_ns / 1_000_000,
+              accel_x_mps2 = sensor_event.values[0],
+              accel_y_mps2 = sensor_event.values[1],
+              accel_z_mps2 = sensor_event.values[2],
+              gyro_x_rps = sensor_event.gyro[0],
+              gyro_y_rps = sensor_event.gyro[1],
+              gyro_z_rps = sensor_event.gyro[2]
+          )
+          
+          imu_buffer.append(sample)
+          
+    stop_recording: |
+      function stop_recording():
+          if state != RECORDING:
+              return ERROR_NOT_RECORDING
+              
+          state = STOPPING
+          
+          # Unregister listeners
+          unregister_gps_listener(gps_listener)
+          unregister_imu_listener(imu_listener)
+          
+          end_time = current_time_ms()
+          
+          # Build session file
+          session = SessionFile(
+              schema_version = "1.0",
+              session_id = session_id,
+              start_timestamp_ms = start_time,
+              end_timestamp_ms = end_time,
+              device_model = get_device_model(),
+              os_version = get_os_version(),
+              app_version = APP_VERSION,
+              orientation = orientation,
+              gps_samples = gps_buffer.to_array(),
+              imu_samples = imu_buffer.to_array(),
+              gps_sample_count = gps_buffer.size,
+              imu_sample_count = imu_buffer.size,
+              duration_seconds = (end_time - start_time) / 1000.0
+          )
+          
+          # Compute checksum
+          session.checksum = sha256(serialize(session.data))
+          
+          # Write to file
+          filename = format("session_{}.json", format_timestamp(start_time))
+          write_json(filename, session)
+          
+          # Clear buffers
+          gps_buffer.clear()
+          imu_buffer.clear()
+          
+          state = IDLE
+          return SUCCESS
+          
+    error_handling: |
+      function on_sensor_error(error_type, sensor):
+          # Log error but do not crash
+          log_error(error_type, sensor)
+          
+          if sensor == GPS:
+              # GPS failure - record will be partial
+              gps_listener.is_healthy = false
+              
+          if sensor == IMU:
+              # IMU failure - record will be partial
+              imu_listener.is_healthy = false
+              
+          # Continue recording with available sensors
+          # DO NOT stop session automatically
+          # Let user decide
+          
+  # ---------------------------------------------------------------------------
+  # 4.2 SENSOR FUSION (Offline Processing)
+  # ---------------------------------------------------------------------------
+  fusion:
+    
+    module: "OfflineProcessor"
+    language: "Python-style pseudocode"
+    
+    load_and_validate: |
+      def load_session(filepath: str) -> SessionData:
+          """Load and validate session file."""
+          
+          with open(filepath, 'r') as f:
+              data = json.load(f)
+              
+          # Validate schema version
+          if data['schema_version'] != '1.0':
+              raise UnsupportedSchemaError(data['schema_version'])
+              
+          # Validate checksum
+          computed_checksum = sha256(serialize(data['gps_samples'], data['imu_samples']))
+          if computed_checksum != data['checksum']:
+              raise ChecksumError("Data integrity check failed")
+              
+          # Validate minimum data
+          if data['gps_sample_count'] < 10:
+              raise InsufficientDataError("Need at least 10 GPS samples")
+              
+          if data['imu_sample_count'] < 100:
+              raise InsufficientDataError("Need at least 100 IMU samples")
+              
+          return SessionData(data)
+          
+    smooth_gps: |
+      def smooth_gps(gps_samples: List[GPSSample]) -> List[SmoothedPoint]:
+          """Apply smoothing filter to GPS trajectory."""
+          
+          # Convert to local coordinates
+          origin_lat = median([s.latitude_deg for s in gps_samples])
+          origin_lon = median([s.longitude_deg for s in gps_samples])
+          
+          points = []
+          for sample in gps_samples:
+              x = (sample.longitude_deg - origin_lon) * cos(radians(origin_lat)) * 111319.9
+              y = (sample.latitude_deg - origin_lat) * 111319.9
+              points.append(LocalPoint(x, y, sample.timestamp_ms, sample.speed_mps))
+              
+          # Apply Savitzky-Golay filter
+          # Window size = 5, polynomial order = 2
+          window_size = 5
+          poly_order = 2
+          
+          if len(points) < window_size:
+              # Too few points - no smoothing possible
+              return points
+              
+          x_smoothed = savitzky_golay([p.x for p in points], window_size, poly_order)
+          y_smoothed = savitzky_golay([p.y for p in points], window_size, poly_order)
+          
+          smoothed_points = []
+          for i, point in enumerate(points):
+              smoothed_points.append(SmoothedPoint(
+                  x_m = x_smoothed[i],
+                  y_m = y_smoothed[i],
+                  timestamp_ms = point.timestamp_ms,
+                  speed_mps = point.speed_mps,
+                  source = 'GPS_SMOOTHED'
+              ))
+              
+          return smoothed_points
+          
+    process_imu: |
+      def process_imu(imu_samples: List[IMUSample], 
+                      orientation: OrientationMetadata) -> List[ProcessedIMU]:
+          """Process IMU: rotate to vehicle frame, remove bias."""
+          
+          # Estimate bias from first 100 samples (assumed stationary)
+          if len(imu_samples) < 100:
+              bias_samples = imu_samples
+          else:
+              bias_samples = imu_samples[:100]
+              
+          gyro_z_bias = median([s.gyro_z_rps for s in bias_samples])
+          
+          # Build rotation matrix from orientation
+          R = rotation_matrix_from_gravity(orientation.gravity_vector)
+          
+          processed = []
+          for sample in imu_samples:
+              # Rotate acceleration to vehicle frame
+              accel_device = [sample.accel_x_mps2, sample.accel_y_mps2, sample.accel_z_mps2]
+              accel_vehicle = R @ accel_device
+              
+              # Lateral acceleration is Y in vehicle frame (after rotation)
+              lateral_g = accel_vehicle[1] / 9.81
+              
+              # Yaw rate with bias removed
+              yaw_rate_rps = sample.gyro_z_rps - gyro_z_bias
+              
+              processed.append(ProcessedIMU(
+                  timestamp_ms = sample.timestamp_ms,
+                  lateral_g = lateral_g,
+                  yaw_rate_rps = yaw_rate_rps
+              ))
+              
+          return processed
+          
+    fuse_sensors: |
+      def fuse_sensors(gps_points: List[SmoothedPoint],
+                       imu_data: List[ProcessedIMU]) -> List[FusedPoint]:
+          """
+          Simple complementary filter fusion.
+          GPS provides absolute position (low frequency, accurate long-term).
+          IMU provides relative motion (high frequency, drifts).
+          """
+          
+          # Interpolate GPS to IMU timestamps
+          gps_interp = interpolate_gps_to_timestamps(
+              gps_points, 
+              [imu.timestamp_ms for imu in imu_data]
+          )
+          
+          # Complementary filter parameters
+          alpha = 0.98  # Trust IMU for high-frequency, GPS for low-frequency
+          
+          fused = []
+          prev_point = None
+          integrated_x = gps_interp[0].x_m
+          integrated_y = gps_interp[0].y_m
+          integrated_heading = compute_initial_heading(gps_points[:5])
+          
+          for i, (gps, imu) in enumerate(zip(gps_interp, imu_data)):
+              
+              if prev_point is not None:
+                  dt = (imu.timestamp_ms - prev_point.timestamp_ms) / 1000.0
+                  
+                  if dt > 0 and dt < 1.0:  # Sanity check on dt
+                      # Integrate yaw rate to get heading change
+                      d_heading = imu.yaw_rate_rps * dt
+                      integrated_heading += d_heading
+                      
+                      # Integrate velocity to get position change
+                      speed = gps.speed_mps
+                      dx = speed * cos(integrated_heading) * dt
+                      dy = speed * sin(integrated_heading) * dt
+                      integrated_x += dx
+                      integrated_y += dy
+                      
+              # Complementary filter: blend GPS and integrated position
+              fused_x = alpha * integrated_x + (1 - alpha) * gps.x_m
+              fused_y = alpha * integrated_y + (1 - alpha) * gps.y_m
+              
+              # Reset integration to fused position (prevents drift)
+              integrated_x = fused_x
+              integrated_y = fused_y
+              
+              fused.append(FusedPoint(
+                  timestamp_ms = imu.timestamp_ms,
+                  x_m = fused_x,
+                  y_m = fused_y,
+                  heading_rad = integrated_heading,
+                  speed_mps = gps.speed_mps,
+                  lateral_g = imu.lateral_g
+              ))
+              
+              prev_point = imu
+              
+          return fused
+          
+    build_centerline: |
+      def build_centerline(fused_points: List[FusedPoint],
+                           resolution_m: float = 1.0) -> List[CenterlinePoint]:
+          """Build uniformly-spaced centerline."""
+          
+          # Compute cumulative distance
+          distances = [0.0]
+          for i in range(1, len(fused_points)):
+              dx = fused_points[i].x_m - fused_points[i-1].x_m
+              dy = fused_points[i].y_m - fused_points[i-1].y_m
+              d = sqrt(dx*dx + dy*dy)
+              distances.append(distances[-1] + d)
+              
+          total_distance = distances[-1]
+          
+          # Interpolate to uniform spacing
+          centerline = []
+          target_distance = 0.0
+          
+          while target_distance <= total_distance:
+              # Find surrounding points
+              i = find_index_for_distance(distances, target_distance)
+              
+              # Linear interpolation
+              if i >= len(fused_points) - 1:
+                  break
+                  
+              t = (target_distance - distances[i]) / (distances[i+1] - distances[i])
+              
+              x = lerp(fused_points[i].x_m, fused_points[i+1].x_m, t)
+              y = lerp(fused_points[i].y_m, fused_points[i+1].y_m, t)
+              heading = lerp_angle(fused_points[i].heading_rad, fused_points[i+1].heading_rad, t)
+              speed = lerp(fused_points[i].speed_mps, fused_points[i+1].speed_mps, t)
+              
+              centerline.append(CenterlinePoint(
+                  distance_m = target_distance,
+                  x_m = x,
+                  y_m = y,
+                  heading_rad = heading,
+                  speed_mps = speed,
+                  confidence = 1.0  # V1: no confidence scoring
+              ))
+              
+              target_distance += resolution_m
+              
+          return centerline
+          
+  # ---------------------------------------------------------------------------
+  # 4.3 SEGMENTATION (Offline Processing)
+  # ---------------------------------------------------------------------------
+  segmentation:
+    
+    module: "Segmenter"
+    language: "Python-style pseudocode"
+    
+    segment_track: |
+      def segment_track(centerline: List[CenterlinePoint],
+                        segment_length_m: float = 10.0) -> List[TrackSegment]:
+          """Divide track into fixed-length segments."""
+          
+          segments = []
+          segment_id = 0
+          
+          i = 0
+          while i < len(centerline):
+              # Find end of segment
+              start_distance = centerline[i].distance_m
+              end_distance = start_distance + segment_length_m
+              
+              # Collect points in this segment
+              segment_points = []
+              while i < len(centerline) and centerline[i].distance_m < end_distance:
+                  segment_points.append(centerline[i])
+                  i += 1
+                  
+              if len(segment_points) < 3:
+                  # Not enough points for curvature
+                  continue
+                  
+              # Compute curvature for segment
+              curvatures = compute_curvatures(segment_points)
+              
+              # Classify segment
+              max_curvature = max(abs(c) for c in curvatures)
+              mean_curvature = sum(abs(c) for c in curvatures) / len(curvatures)
+              
+              if max_curvature < 0.01:  # 1/100m = 100m radius or straighter
+                  segment_type = 'STRAIGHT'
+              else:
+                  segment_type = 'CORNER'
+                  
+              # Compute mean speed
+              mean_speed = sum(p.speed_mps for p in segment_points) / len(segment_points)
+              
+              segments.append(TrackSegment(
+                  segment_id = segment_id,
+                  start_distance_m = segment_points[0].distance_m,
+                  end_distance_m = segment_points[-1].distance_m,
+                  length_m = segment_points[-1].distance_m - segment_points[0].distance_m,
+                  curvature_mean = mean_curvature,
+                  curvature_max = max_curvature,
+                  speed_mean_mps = mean_speed,
+                  segment_type = segment_type
+              ))
+              
+              segment_id += 1
+              
+          return segments
+          
+    compute_curvature: |
+      def compute_curvatures(points: List[CenterlinePoint]) -> List[float]:
+          """Compute Menger curvature at each point using 3-point method."""
+          
+          curvatures = []
+          
+          for i in range(1, len(points) - 1):
+              p0 = points[i - 1]
+              p1 = points[i]
+              p2 = points[i + 1]
+              
+              # Menger curvature: κ = 4A / (|P0P1| × |P1P2| × |P2P0|)
+              # Where A is area of triangle
+              
+              # Side lengths
+              a = sqrt((p1.x_m - p0.x_m)**2 + (p1.y_m - p0.y_m)**2)
+              b = sqrt((p2.x_m - p1.x_m)**2 + (p2.y_m - p1.y_m)**2)
+              c = sqrt((p2.x_m - p0.x_m)**2 + (p2.y_m - p0.y_m)**2)
+              
+              # Area using cross product
+              cross = (p1.x_m - p0.x_m) * (p2.y_m - p0.y_m) - (p1.y_m - p0.y_m) * (p2.x_m - p0.x_m)
+              area = abs(cross) / 2.0
+              
+              # Curvature (with sign from cross product)
+              denominator = a * b * c
+              if denominator > 0.001:  # Avoid division by zero
+                  curvature = (4.0 * area) / denominator
+                  if cross < 0:
+                      curvature = -curvature  # Preserve sign (left/right turn)
+              else:
+                  curvature = 0.0
+                  
+              curvatures.append(curvature)
+              
+          # Pad start and end with nearest value
+          if curvatures:
+              curvatures.insert(0, curvatures[0])
+              curvatures.append(curvatures[-1])
+              
+          return curvatures
+
+# =============================================================================
+# SECTION 5: VALIDATION CHECKLIST
+# =============================================================================
+
+validation_checklist:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 RECORDING VALIDATION
+  # ---------------------------------------------------------------------------
+  recording:
+    
+    - check: "GPS samples collected"
+      method: "gps_sample_count > 0"
+      pass_criteria: "> 0"
+      critical: true
+      
+    - check: "IMU samples collected"
+      method: "imu_sample_count > 0"
+      pass_criteria: "> 0"
+      critical: true
+      
+    - check: "GPS rate acceptable"
+      method: "gps_sample_count / duration_seconds"
+      pass_criteria: ">= 1 Hz"
+      critical: true
+      
+    - check: "IMU rate acceptable"
+      method: "imu_sample_count / duration_seconds"
+      pass_criteria: ">= 25 Hz"
+      critical: true
+      
+    - check: "Timestamps monotonic"
+      method: "all(t[i+1] > t[i] for i in range)"
+      pass_criteria: "True"
+      critical: true
+      
+    - check: "No large GPS gaps"
+      method: "max(gps_gap) < 5 seconds"
+      pass_criteria: "< 5s"
+      critical: false
+      
+    - check: "File checksum valid"
+      method: "computed_checksum == stored_checksum"
+      pass_criteria: "Match"
+      critical: true
+      
+    - check: "Coordinates in valid range"
+      method: "|latitude| <= 90 and |longitude| <= 180"
+      pass_criteria: "All valid"
+      critical: true
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 PROCESSING VALIDATION
+  # ---------------------------------------------------------------------------
+  processing:
+    
+    - check: "Centerline closes (if lap)"
+      method: "distance(first_point, last_point)"
+      pass_criteria: "< 50m for closed track"
+      critical: false
+      
+    - check: "Total distance plausible"
+      method: "total_distance_m"
+      pass_criteria: "500m - 30km"
+      critical: true
+      
+    - check: "No position teleportation"
+      method: "max(point_to_point_distance)"
+      pass_criteria: "< 50m between consecutive points"
+      critical: true
+      
+    - check: "Speed values plausible"
+      method: "all speeds"
+      pass_criteria: "0 - 150 m/s (540 km/h)"
+      critical: true
+      
+    - check: "Curvature values plausible"
+      method: "all curvatures"
+      pass_criteria: "< 0.5 (radius > 2m)"
+      critical: true
+      
+    - check: "No NaN or Inf values"
+      method: "all outputs finite"
+      pass_criteria: "No NaN/Inf"
+      critical: true
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 VISUAL VALIDATION (Human)
+  # ---------------------------------------------------------------------------
+  visual:
+    
+    - check: "Track shape recognizable"
+      method: "Human inspection of track_map.png"
+      pass_criteria: "Matches known track layout"
+      
+    - check: "No obvious glitches in trajectory"
+      method: "Human inspection"
+      pass_criteria: "No spikes, loops, or discontinuities"
+      
+    - check: "Speed overlay sensible"
+      method: "Human inspection of speed_overlay.png"
+      pass_criteria: "High speed on straights, low in corners"
+      
+    - check: "Curvature profile sensible"
+      method: "Human inspection of curvature_profile.png"
+      pass_criteria: "Peaks at corners, near-zero on straights"
+      
+  # ---------------------------------------------------------------------------
+  # 5.4 CROSS-VALIDATION
+  # ---------------------------------------------------------------------------
+  cross_validation:
+    
+    - check: "GPS-derived distance vs integrated distance"
+      method: "Compare sum(GPS speeds × dt) vs total distance"
+      pass_criteria: "Within 5%"
+      
+    - check: "Recorded speed vs position-derived speed"
+      method: "Compare GPS speed vs d(position)/dt"
+      pass_criteria: "Within 10%"
+      
+    - check: "Heading from GPS vs heading from IMU integration"
+      method: "Compare after full lap"
+      pass_criteria: "Within 20° (IMU drift expected)"
+
+# =============================================================================
+# SECTION 6: EXPLICIT NON-GOALS
+# =============================================================================
+
+non_goals:
+
+  description: |
+    These items are INTENTIONALLY not built in V1.
+    This is not a TODO list. This is a "NOT NOW" list.
+    Building these in V1 would violate the vertical slice principle.
+    
+  items:
+    
+    - non_goal: "Real-time processing"
+      status: "NOT IN V1"
+      reason: "V1 is offline-only to prove the math works first"
+      when: "V3"
+      
+    - non_goal: "Voice output"
+      status: "NOT IN V1"
+      reason: "Requires validated envelopes and attention model"
+      when: "V4"
+      
+    - non_goal: "Deviation detection"
+      status: "NOT IN V1"
+      reason: "Requires baseline envelopes to compare against"
+      when: "V3"
+      
+    - non_goal: "Adaptive learning"
+      status: "NOT IN V1"
+      reason: "Requires multiple validated laps"
+      when: "V5"
+      
+    - non_goal: "Multi-lap fusion"
+      status: "NOT IN V1"
+      reason: "Single lap first, then fusion"
+      when: "V2"
+      
+    - non_goal: "Lap timing"
+      status: "NOT IN V1"
+      reason: "Requires start/finish detection"
+      when: "V2"
+      
+    - non_goal: "Track database"
+      status: "NOT IN V1"
+      reason: "Single session, no persistence beyond file"
+      when: "V2"
+      
+    - non_goal: "Cloud sync"
+      status: "NOT IN V1"
+      reason: "Offline-only operation"
+      when: "Never required"
+      
+    - non_goal: "User accounts"
+      status: "NOT IN V1"
+      reason: "Not needed for validation"
+      when: "V6+"
+      
+    - non_goal: "Performance optimization"
+      status: "NOT IN V1"
+      reason: "Correctness first, then performance"
+      when: "After validation"
+      
+    - non_goal: "iOS support"
+      status: "NOT IN V1"
+      reason: "Android primary platform for V1"
+      when: "V2"
+      
+    - non_goal: "Polished UI"
+      status: "NOT IN V1"
+      reason: "Functional UI only: Start/Stop/View Files"
+      when: "V4+"
+      
+    - non_goal: "Error recovery"
+      status: "MINIMAL IN V1"
+      reason: "Fail silent, no retry logic"
+      when: "V3"
+      
+    - non_goal: "Kalman filter fusion"
+      status: "NOT IN V1"
+      reason: "Simple complementary filter first"
+      when: "V2 if needed"
+      
+    - non_goal: "Confidence scoring"
+      status: "STUB IN V1"
+      reason: "All points confidence = 1.0 in V1"
+      when: "V2"
+
+# =============================================================================
+# SECTION 7: IMPLEMENTATION PLAN
+# =============================================================================
+
+implementation_plan:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 PHASE 1: MOBILE RECORDING APP
+  # ---------------------------------------------------------------------------
+  phase_1:
+    
+    name: "Sensor Recording App"
+    duration: "1-2 weeks"
+    platform: "Android (Kotlin)"
+    
+    deliverables:
+      - "Minimal Android app with Start/Stop buttons"
+      - "GPS recording at highest available rate"
+      - "IMU recording at 50+ Hz"
+      - "Orientation capture on start"
+      - "JSON file output to device storage"
+      - "File list view to see recordings"
+      - "Share button to export files"
+      
+    ui_mockup: |
+      ┌─────────────────────────────────┐
+      │        Track Recorder V1        │
+      ├─────────────────────────────────┤
+      │                                 │
+      │   GPS: ● Active (8 sats)        │
+      │   IMU: ● Active (52 Hz)         │
+      │                                 │
+      │   Duration: 00:03:45            │
+      │   GPS Samples: 225              │
+      │   IMU Samples: 11250            │
+      │                                 │
+      │  ┌─────────────────────────────┐│
+      │  │                             ││
+      │  │     [ START RECORDING ]     ││
+      │  │                             ││
+      │  └─────────────────────────────┘│
+      │                                 │
+      │   Recent Sessions:              │
+      │   ○ session_20260202_143022.json│
+      │   ○ session_20260201_091545.json│
+      │                                 │
+      └─────────────────────────────────┘
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 PHASE 2: OFFLINE PROCESSOR
+  # ---------------------------------------------------------------------------
+  phase_2:
+    
+    name: "Python Offline Processor"
+    duration: "1-2 weeks"
+    platform: "Python 3.10+ (desktop)"
+    
+    dependencies:
+      - "numpy"
+      - "scipy"
+      - "matplotlib"
+      
+    deliverables:
+      - "Session file loader with validation"
+      - "GPS smoothing (Savitzky-Golay)"
+      - "IMU processing (bias removal, rotation)"
+      - "Complementary filter fusion"
+      - "Centerline builder (1m resolution)"
+      - "Track segmenter (10m segments)"
+      - "Curvature computer (Menger)"
+      - "JSON output for processed data"
+      
+    cli_interface: |
+      $ python process_session.py session_20260202_143022.json
+      
+      Loading session...
+      GPS samples: 225
+      IMU samples: 11250
+      Duration: 225.0 seconds
+      
+      Smoothing GPS...
+      Processing IMU...
+      Fusing sensors...
+      Building centerline...
+      Segmenting track...
+      Computing curvature...
+      
+      Output: processed_20260202_143022.json
+      
+  # ---------------------------------------------------------------------------
+  # 7.3 PHASE 3: VISUALIZATION
+  # ---------------------------------------------------------------------------
+  phase_3:
+    
+    name: "Track Visualizer"
+    duration: "3-5 days"
+    platform: "Python + Matplotlib"
+    
+    deliverables:
+      - "2D track map plot"
+      - "Speed color overlay"
+      - "Curvature vs distance plot"
+      - "PNG export"
+      
+    cli_interface: |
+      $ python visualize_track.py processed_20260202_143022.json
+      
+      Generating track map... saved to track_map.png
+      Generating speed overlay... saved to speed_overlay.png
+      Generating curvature profile... saved to curvature_profile.png
+      
+  # ---------------------------------------------------------------------------
+  # 7.4 MILESTONE: V1 COMPLETE
+  # ---------------------------------------------------------------------------
+  milestone:
+    
+    name: "V1 Vertical Slice Complete"
+    criteria:
+      - "Record session on real device"
+      - "Transfer file to desktop"
+      - "Process file successfully"
+      - "Generate visualizations"
+      - "Visually validate against known track"
+      - "All checklist items pass"
+      
+    success_evidence:
+      - "Screenshot of app recording"
+      - "JSON file from real session"
+      - "track_map.png showing recognizable track"
+      - "speed_overlay.png with sensible colors"
+      - "curvature_profile.png with expected peaks"
+      - "Validation checklist completed"
+
+# =============================================================================
+# END OF VERTICAL SLICE V1 SPECIFICATION
+# =============================================================================
