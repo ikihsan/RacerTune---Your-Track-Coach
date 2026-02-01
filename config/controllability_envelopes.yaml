@@ -1,0 +1,1218 @@
+# =============================================================================
+# CONTROLLABILITY ENVELOPES - PHYSICS-BASED LIMITS
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: Physics defines hard ceilings. Safety margins ensure
+# the driver has room for error. These envelopes are NEVER racing-line
+# optimizations - they are controllability limits.
+#
+# PURPOSE: Define what the vehicle CAN do, not what it SHOULD do.
+# The driver decides the line. We ensure the line is survivable.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "PHYSICS_MODEL"
+
+# =============================================================================
+# SECTION 1: FOUNDATIONAL PHYSICS
+# =============================================================================
+
+foundational_physics:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 CORE EQUATIONS
+  # ---------------------------------------------------------------------------
+  core_equations:
+    
+    # Newton's second law applied to vehicle dynamics
+    equation_1:
+      name: "Force-Acceleration Relationship"
+      formula: "F = m × a"
+      where:
+        F: "Force (N)"
+        m: "Vehicle mass (kg)"
+        a: "Acceleration (m/s²)"
+      relevance: "All forces on vehicle produce accelerations"
+      
+    # Centripetal force for circular motion
+    equation_2:
+      name: "Centripetal Acceleration"
+      formula: "a_lateral = v² / R"
+      where:
+        a_lateral: "Lateral acceleration (m/s²)"
+        v: "Velocity (m/s)"
+        R: "Radius of turn (m)"
+      relevance: "Defines relationship between speed and cornering"
+      
+    # Friction force limit
+    equation_3:
+      name: "Friction Limit"
+      formula: "F_max = μ × N"
+      where:
+        F_max: "Maximum friction force (N)"
+        mu: "Coefficient of friction (dimensionless)"
+        N: "Normal force (N)"
+      relevance: "Tires cannot exceed friction limit"
+      
+    # Kinetic energy
+    equation_4:
+      name: "Kinetic Energy"
+      formula: "KE = ½ × m × v²"
+      where:
+        KE: "Kinetic energy (J)"
+        m: "Mass (kg)"
+        v: "Velocity (m/s)"
+      relevance: "Energy that must be dissipated when braking"
+      
+  # ---------------------------------------------------------------------------
+  # 1.2 FUNDAMENTAL CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  fundamental_constraints:
+    
+    constraint_1:
+      name: "Friction Circle"
+      statement: |
+        The vector sum of longitudinal and lateral tire forces cannot
+        exceed the friction limit. This is the fundamental constraint
+        that governs all vehicle dynamics.
+      formula: "√(F_long² + F_lat²) ≤ μ × N"
+      implication: |
+        You cannot brake at maximum AND turn at maximum simultaneously.
+        Combined maneuvers share the available grip.
+        
+    constraint_2:
+      name: "Conservation of Energy"
+      statement: |
+        Kinetic energy must go somewhere. When braking, it converts to
+        heat in brakes/tires. When cornering, work is done against
+        lateral forces. Energy cannot be created or destroyed.
+      implication: |
+        Braking distance is determined by initial speed and deceleration.
+        There are no shortcuts.
+        
+    constraint_3:
+      name: "Tire Load Sensitivity"
+      statement: |
+        Tire grip coefficient decreases as load increases. A tire with
+        twice the load does NOT have twice the grip. This is why weight
+        transfer reduces total available grip.
+      formula: "μ_effective = μ_base × (N_base / N)^α"
+      where:
+        alpha: "Load sensitivity exponent (typically 0.1-0.2)"
+      implication: |
+        Weight transfer during braking/acceleration reduces total grip.
+        Smooth driving preserves grip.
+
+# =============================================================================
+# SECTION 2: MAXIMUM CORNER SPEED
+# =============================================================================
+
+maximum_corner_speed:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 WHY THIS ENVELOPE EXISTS
+  # ---------------------------------------------------------------------------
+  rationale:
+    
+    statement: |
+      For any corner with radius R, there exists a maximum speed beyond which
+      the required lateral acceleration exceeds tire grip. Exceeding this speed
+      WILL result in understeer (front loses grip) or oversteer (rear loses grip),
+      leading to loss of control.
+      
+    physics_basis: |
+      Centripetal acceleration: a = v²/R
+      Maximum lateral acceleration: a_max = μ × g
+      Therefore: v_max = √(μ × g × R)
+      
+    why_mandatory: |
+      This is not a suggestion. It is physics. A car cannot corner faster than
+      the tires can grip. Attempting to do so results in the car continuing
+      in a straight line (understeer) or spinning (oversteer).
+      
+  # ---------------------------------------------------------------------------
+  # 2.2 EQUATIONS
+  # ---------------------------------------------------------------------------
+  equations:
+    
+    # Basic corner speed limit
+    basic_corner_speed:
+      name: "Theoretical Maximum Corner Speed"
+      formula: "v_max_theoretical = √(μ × g × R)"
+      where:
+        v_max_theoretical: "Maximum possible speed (m/s)"
+        mu: "Tire-road friction coefficient"
+        g: "Gravitational acceleration (9.81 m/s²)"
+        R: "Corner radius (m)"
+        
+      example:
+        mu: 1.0
+        R: 50
+        result: "√(1.0 × 9.81 × 50) = 22.1 m/s = 79.7 km/h"
+        
+    # With banking angle
+    banked_corner_speed:
+      name: "Banked Corner Speed Limit"
+      formula: "v_max = √(g × R × (μ + tan(θ)) / (1 - μ × tan(θ)))"
+      where:
+        theta: "Banking angle (radians), positive = banked into turn"
+      note: "Banking adds effective grip, off-camber subtracts"
+      
+    # With downforce
+    downforce_corner_speed:
+      name: "Aerodynamic Corner Speed Limit"
+      formula: "v_max = √((μ × g × R × m + μ × C_L × ρ × A × R × v²/2) / m)"
+      simplified: "Solved iteratively as v appears on both sides"
+      where:
+        C_L: "Downforce coefficient"
+        rho: "Air density (kg/m³)"
+        A: "Frontal area (m²)"
+      note: "Only relevant for high-downforce vehicles at high speed"
+      
+  # ---------------------------------------------------------------------------
+  # 2.3 SAFETY MARGINS
+  # ---------------------------------------------------------------------------
+  safety_margins:
+    
+    rationale: |
+      The theoretical maximum assumes:
+      - Perfect tire grip (no wear, optimal temperature)
+      - Perfect surface (no bumps, no debris)
+      - Perfect driver inputs (no corrections needed)
+      - Instantaneous weight transfer (not realistic)
+      
+      None of these are true in practice. Safety margins account for reality.
+      
+    margin_factors:
+      
+      - factor: "base_safety_margin"
+        value: 0.85
+        rationale: |
+          15% margin below theoretical maximum. This accounts for:
+          - Tire wear and temperature variation
+          - Surface grip variation
+          - Weight transfer settling time
+          - Driver reaction time for corrections
+          
+      - factor: "confidence_margin"
+        formula: "margin = base_margin × geometry_confidence"
+        rationale: |
+          If track geometry confidence is lower, increase margin.
+          At 0.7 confidence: effective_margin = 0.85 × 0.7 = 0.60
+          
+      - factor: "learning_margin"
+        values:
+          no_prior_data: 0.70
+          1_to_3_laps: 0.80
+          3_to_10_laps: 0.85
+          10_plus_laps: 0.90
+        rationale: |
+          More data = more confidence in the envelope.
+          Less data = more conservative limits.
+          
+    combined_margin:
+      formula: "effective_margin = base × confidence × learning"
+      minimum_margin: 0.60
+      maximum_margin: 0.90
+      
+  # ---------------------------------------------------------------------------
+  # 2.4 COMPUTED LIMITS
+  # ---------------------------------------------------------------------------
+  computed_limits:
+    
+    corner_speed_envelope:
+      formula: "v_envelope = effective_margin × √(μ × g × R)"
+      
+    per_segment_output:
+      - segment_id: "Integer"
+      - radius_m: "Minimum radius in segment (from curvature)"
+      - v_max_theoretical_mps: "Physics limit"
+      - v_max_envelope_mps: "With safety margin"
+      - margin_applied: "Effective margin used"
+      - confidence: "Confidence in this limit"
+      
+  # ---------------------------------------------------------------------------
+  # 2.5 CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  constraints:
+    
+    - constraint: "v_envelope ≤ v_max_theoretical"
+      description: "Envelope never exceeds physics limit"
+      enforcement: "Hard ceiling"
+      
+    - constraint: "v_envelope ≤ v_max_straight"
+      description: "Corner speed ≤ approach straight speed"
+      enforcement: "Logical consistency"
+      
+    - constraint: "v_envelope > 0"
+      description: "Speed must be positive"
+      enforcement: "Sanity check"
+      
+    - constraint: "If confidence < 0.5, v_envelope = UNDEFINED"
+      description: "Cannot compute envelope with very low confidence"
+      enforcement: "Refuse to advise"
+
+# =============================================================================
+# SECTION 3: BRAKING LIMITS
+# =============================================================================
+
+braking_limits:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 WHY THIS ENVELOPE EXISTS
+  # ---------------------------------------------------------------------------
+  rationale:
+    
+    statement: |
+      Braking converts kinetic energy to heat via friction. The maximum
+      deceleration is limited by tire grip. Exceeding this limit causes
+      wheel lockup (ABS intervention) or loss of directional control.
+      
+    physics_basis: |
+      Maximum deceleration: a_max = μ × g
+      Braking distance: d = v² / (2 × a)
+      Therefore: d_min = v² / (2 × μ × g)
+      
+    why_mandatory: |
+      The laws of physics determine minimum stopping distance. No amount
+      of driver skill can brake harder than tire grip allows. Advising
+      a braking point that violates this limit WILL cause an accident.
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 EQUATIONS
+  # ---------------------------------------------------------------------------
+  equations:
+    
+    # Maximum longitudinal deceleration
+    max_deceleration:
+      name: "Maximum Braking Deceleration"
+      formula: "a_brake_max = μ × g × cos(θ) + g × sin(θ)"
+      where:
+        a_brake_max: "Maximum deceleration (m/s²)"
+        mu: "Friction coefficient"
+        g: "Gravitational acceleration (9.81 m/s²)"
+        theta: "Road gradient (positive = uphill)"
+      note: "Uphill increases effective braking; downhill decreases"
+      
+      flat_road_simplification: "a_brake_max = μ × g"
+      
+      example:
+        mu: 1.2
+        g: 9.81
+        result: "1.2 × 9.81 = 11.77 m/s² = 1.2g"
+        
+    # Braking distance
+    braking_distance:
+      name: "Minimum Braking Distance"
+      formula: "d_brake = (v_initial² - v_final²) / (2 × a_brake)"
+      where:
+        d_brake: "Braking distance (m)"
+        v_initial: "Speed at brake application (m/s)"
+        v_final: "Target speed (m/s), 0 for full stop"
+        a_brake: "Applied deceleration (m/s²)"
+        
+      example:
+        v_initial: "100 km/h = 27.78 m/s"
+        v_final: "50 km/h = 13.89 m/s"
+        a_brake: "10 m/s² (≈1g)"
+        result: "(27.78² - 13.89²) / (2 × 10) = 28.9m"
+        
+    # Braking time
+    braking_time:
+      name: "Braking Duration"
+      formula: "t_brake = (v_initial - v_final) / a_brake"
+      
+    # Weight transfer during braking
+    weight_transfer:
+      name: "Longitudinal Weight Transfer"
+      formula: "ΔN_front = (m × a × h) / L"
+      where:
+        delta_N_front: "Load transfer to front axle (N)"
+        m: "Vehicle mass (kg)"
+        a: "Deceleration (m/s²)"
+        h: "Center of gravity height (m)"
+        L: "Wheelbase (m)"
+      implication: |
+        Under braking, front tires gain load (and grip), rear tires lose load.
+        This affects brake bias and stability.
+        
+  # ---------------------------------------------------------------------------
+  # 3.3 SAFETY MARGINS
+  # ---------------------------------------------------------------------------
+  safety_margins:
+    
+    rationale: |
+      Real-world braking differs from theoretical due to:
+      - Brake fade (reduced braking as brakes heat)
+      - Tire temperature and wear
+      - Surface contamination (oil, dust, rubber marbles)
+      - Driver reaction time
+      - ABS intervention cycles
+      
+    margin_factors:
+      
+      - factor: "base_braking_margin"
+        value: 0.85
+        rationale: |
+          15% margin below theoretical maximum deceleration.
+          This provides buffer for real-world variations.
+          
+      - factor: "gradient_margin"
+        formula: |
+          If downhill (θ < 0): margin = base × (1 + 0.1 × |sin(θ)|)
+          More margin needed on downhill as braking is harder.
+          
+      - factor: "corner_approach_margin"
+        value: 0.90
+        rationale: |
+          When braking into a corner, grip is shared with turning.
+          Extra margin ensures grip available for turn-in.
+          
+      - factor: "distance_margin"
+        value: 1.10
+        rationale: |
+          Add 10% to calculated braking distance.
+          Better to brake 10% early than 1m late.
+          
+  # ---------------------------------------------------------------------------
+  # 3.4 COMPUTED LIMITS
+  # ---------------------------------------------------------------------------
+  computed_limits:
+    
+    deceleration_envelope:
+      formula: "a_envelope = effective_margin × μ × g"
+      
+    braking_distance_envelope:
+      formula: "d_envelope = distance_margin × (v_initial² - v_final²) / (2 × a_envelope)"
+      
+    braking_point:
+      formula: "brake_point = corner_entry - d_envelope"
+      where:
+        corner_entry: "Distance where cornering begins"
+        d_envelope: "Required braking distance with margins"
+        
+    per_corner_output:
+      - corner_id: "Integer"
+      - approach_speed_mps: "Expected/learned approach speed"
+      - corner_entry_speed_mps: "Speed needed at corner entry"
+      - delta_v_mps: "Speed reduction required"
+      - a_max_theoretical: "Physics limit deceleration"
+      - a_envelope: "Envelope deceleration with margin"
+      - d_brake_min: "Minimum theoretical distance"
+      - d_brake_envelope: "Envelope distance with margin"
+      - brake_point_distance_m: "Where to begin braking"
+      - confidence: "Confidence in this calculation"
+      
+  # ---------------------------------------------------------------------------
+  # 3.5 CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  constraints:
+    
+    - constraint: "a_envelope ≤ a_max_theoretical"
+      description: "Cannot decelerate faster than physics allows"
+      enforcement: "Hard ceiling"
+      
+    - constraint: "d_envelope ≥ d_brake_min"
+      description: "Braking distance cannot be shorter than physics allows"
+      enforcement: "Hard floor"
+      
+    - constraint: "brake_point ≥ 0"
+      description: "Cannot brake in negative distance"
+      enforcement: "Sanity check"
+      
+    - constraint: "v_final ≤ v_corner_max"
+      description: "Target speed must not exceed corner limit"
+      enforcement: "Consistency with corner speed envelope"
+
+# =============================================================================
+# SECTION 4: STEERING INTENSITY VS SPEED
+# =============================================================================
+
+steering_intensity:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 WHY THIS ENVELOPE EXISTS
+  # ---------------------------------------------------------------------------
+  rationale:
+    
+    statement: |
+      Steering generates lateral acceleration. At higher speeds, less steering
+      angle is needed to achieve the same lateral acceleration. Excessive
+      steering at high speed can instantly exceed tire grip, causing abrupt
+      loss of control.
+      
+    physics_basis: |
+      For a given lateral acceleration a_lat:
+      - At low speed: more steering angle needed
+      - At high speed: less steering angle needed
+      
+      The relationship between steering angle and lateral acceleration is
+      non-linear and depends on tire characteristics and vehicle geometry.
+      
+    why_mandatory: |
+      At 200 km/h, a steering input that's fine at 50 km/h can generate
+      4× the lateral acceleration, instantly exceeding grip. Drivers must
+      reduce steering intensity as speed increases.
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 EQUATIONS
+  # ---------------------------------------------------------------------------
+  equations:
+    
+    # Lateral acceleration from steering
+    steering_to_lateral_accel:
+      name: "Steering-Induced Lateral Acceleration"
+      formula: "a_lat = v² × δ / (L × (1 + K × v²))"
+      where:
+        a_lat: "Lateral acceleration (m/s²)"
+        v: "Velocity (m/s)"
+        delta: "Front wheel steering angle (rad)"
+        L: "Wheelbase (m)"
+        K: "Understeer gradient (rad/(m/s²))"
+      note: "Simplified Ackermann-based model"
+      
+    # Maximum allowable steering rate
+    max_steering_rate:
+      name: "Maximum Steering Rate vs Speed"
+      formula: "δ_dot_max = (μ × g) / (v × K_steer)"
+      where:
+        delta_dot_max: "Maximum steering rate (rad/s)"
+        mu: "Friction coefficient"
+        g: "Gravitational acceleration"
+        v: "Velocity (m/s)"
+        K_steer: "Steering gain factor"
+      implication: "Faster speeds require slower steering inputs"
+      
+    # Maximum steering angle for speed
+    max_steering_angle:
+      name: "Maximum Steering Angle at Speed"
+      formula: "δ_max = (μ × g × L × (1 + K × v²)) / v²"
+      derivation: "Rearranged from steering_to_lateral_accel with a_lat = μ × g"
+      
+    # Yaw rate limit
+    yaw_rate_limit:
+      name: "Maximum Yaw Rate"
+      formula: "ω_max = (μ × g) / v"
+      where:
+        omega_max: "Maximum sustainable yaw rate (rad/s)"
+      derivation: "From a_lat = ω × v and a_lat_max = μ × g"
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 SPEED-STEERING RELATIONSHIP
+  # ---------------------------------------------------------------------------
+  speed_steering_relationship:
+    
+    # Steering intensity envelope (relative to maximum)
+    intensity_envelope:
+      description: |
+        Steering intensity is normalized to [0, 1] where 1.0 is maximum
+        allowable steering for current speed.
+        
+      formula: "intensity = δ_actual / δ_max(v)"
+      
+      thresholds:
+        safe: "intensity < 0.70"
+        marginal: "0.70 ≤ intensity < 0.85"
+        limit: "0.85 ≤ intensity < 1.00"
+        exceeded: "intensity ≥ 1.00"
+        
+    # Lookup table (precomputed for efficiency)
+    lookup_table:
+      description: "δ_max (degrees) vs speed for typical vehicle"
+      parameters:
+        mu: 1.0
+        L: 2.7
+        K: 0.002
+        
+      values:
+        # Speed (km/h) : Max steering angle (degrees)
+        30: 45.0
+        50: 25.0
+        70: 15.0
+        90: 10.0
+        110: 7.0
+        130: 5.5
+        150: 4.2
+        180: 3.0
+        200: 2.5
+        250: 1.6
+        300: 1.1
+        
+      pattern: "Approximately inverse-square with speed"
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 SAFETY MARGINS
+  # ---------------------------------------------------------------------------
+  safety_margins:
+    
+    rationale: |
+      High-speed steering requires extra margin because:
+      - Small errors have large consequences
+      - Reaction time is proportionally shorter
+      - Weight transfer dynamics are faster
+      - Aero effects can be unpredictable
+      
+    margin_factors:
+      
+      - factor: "speed_dependent_margin"
+        formula: "margin = 0.90 - 0.001 × v"
+        minimum: 0.70
+        maximum: 0.90
+        rationale: "Higher speeds get more conservative margin"
+        
+        example:
+          at_50_kmh: "0.90 - 0.001 × 50 = 0.85"
+          at_200_kmh: "0.90 - 0.001 × 200 = 0.70"
+          
+      - factor: "transition_margin"
+        value: 0.80
+        applies_when: "Transitioning between corners (S-curves, chicanes)"
+        rationale: "Direction changes require grip reserve"
+        
+  # ---------------------------------------------------------------------------
+  # 4.5 COMPUTED LIMITS
+  # ---------------------------------------------------------------------------
+  computed_limits:
+    
+    steering_envelope:
+      per_speed:
+        - speed_mps: "Velocity"
+        - delta_max_rad: "Maximum steering angle"
+        - delta_envelope_rad: "With safety margin"
+        - omega_max_rps: "Maximum yaw rate"
+        - omega_envelope_rps: "With safety margin"
+        
+    yaw_rate_envelope:
+      formula: "ω_envelope = margin × (μ × g) / v"
+      
+  # ---------------------------------------------------------------------------
+  # 4.6 CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  constraints:
+    
+    - constraint: "δ_actual ≤ δ_envelope"
+      description: "Actual steering must not exceed envelope"
+      detection: "Compare IMU yaw rate with envelope"
+      
+    - constraint: "ω_actual ≤ ω_envelope"
+      description: "Actual yaw rate must not exceed envelope"
+      detection: "Direct from gyroscope"
+      
+    - constraint: "d(δ)/dt ≤ δ_dot_max"
+      description: "Steering rate must not exceed limit"
+      detection: "Differentiate steering/yaw signal"
+
+# =============================================================================
+# SECTION 5: COMBINED GRIP (FRICTION CIRCLE/ELLIPSE)
+# =============================================================================
+
+combined_grip:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 WHY THIS ENVELOPE EXISTS
+  # ---------------------------------------------------------------------------
+  rationale:
+    
+    statement: |
+      Tires have a finite grip budget. This grip can be used for:
+      - Longitudinal force (acceleration or braking)
+      - Lateral force (cornering)
+      - Any combination of both
+      
+      But the TOTAL force cannot exceed the grip limit. This is the
+      friction circle (or ellipse, since longitudinal and lateral grip
+      differ slightly).
+      
+    physics_basis: |
+      The Kamm Circle (friction circle) states:
+      √(F_x² + F_y²) ≤ F_max = μ × N
+      
+      In acceleration terms:
+      √(a_long² + a_lat²) ≤ μ × g
+      
+    why_mandatory: |
+      Trail braking (braking while turning) works because grip is shared.
+      But if you use 80% of grip for braking, only ~60% remains for turning
+      (not 20%, because it's a circle: √(0.8² + x²) = 1 → x = 0.6).
+      
+      Exceeding the friction circle means loss of control. Period.
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 EQUATIONS
+  # ---------------------------------------------------------------------------
+  equations:
+    
+    # Friction circle equation
+    friction_circle:
+      name: "Friction Circle Constraint"
+      formula: "√(a_x² + a_y²) ≤ μ × g"
+      where:
+        a_x: "Longitudinal acceleration (positive = accel, negative = brake)"
+        a_y: "Lateral acceleration"
+        mu: "Friction coefficient"
+        g: "Gravitational acceleration"
+        
+      normalized_form: "(a_x / a_x_max)² + (a_y / a_y_max)² ≤ 1"
+      
+    # Friction ellipse (more realistic)
+    friction_ellipse:
+      name: "Friction Ellipse Constraint"
+      formula: "(a_x / a_x_max)² + (a_y / a_y_max)² ≤ 1"
+      where:
+        a_x_max: "Maximum longitudinal acceleration (typically less than braking)"
+        a_y_max: "Maximum lateral acceleration"
+        
+      typical_values:
+        a_x_max_accel: "0.6-1.0g (acceleration)"
+        a_x_max_brake: "1.0-1.5g (braking)"
+        a_y_max: "1.0-1.5g (cornering)"
+        
+      note: |
+        Braking capability typically exceeds acceleration capability.
+        The ellipse may be asymmetric front-to-rear.
+        
+    # Available lateral grip during braking
+    available_lateral:
+      name: "Available Lateral Grip While Braking"
+      formula: "a_y_available = √(a_max² - a_x²)"
+      example:
+        a_max: "1.0g"
+        a_x: "0.8g (braking)"
+        a_y_available: "√(1.0² - 0.8²) = 0.6g"
+        
+    # Available braking during cornering
+    available_braking:
+      name: "Available Braking Grip While Cornering"
+      formula: "a_x_available = √(a_max² - a_y²)"
+      example:
+        a_max: "1.0g"
+        a_y: "0.7g (cornering)"
+        a_x_available: "√(1.0² - 0.7²) = 0.71g"
+        
+    # Combined utilization
+    grip_utilization:
+      name: "Total Grip Utilization"
+      formula: "utilization = √(a_x² + a_y²) / (μ × g)"
+      range: "[0, 1]"
+      interpretation:
+        below_0.7: "Grip reserve available"
+        0.7_to_0.9: "High utilization, limited reserve"
+        above_0.9: "At limit, no reserve for corrections"
+        above_1.0: "Exceeded - loss of control imminent"
+        
+  # ---------------------------------------------------------------------------
+  # 5.3 THE FRICTION ELLIPSE MODEL
+  # ---------------------------------------------------------------------------
+  friction_ellipse_model:
+    
+    description: |
+      Real tires have different capabilities in different directions.
+      The friction ellipse captures this asymmetry.
+      
+    model:
+      longitudinal_axis:
+        positive_direction: "Acceleration"
+        negative_direction: "Braking"
+        asymmetric: true
+        typical_accel_g: 0.8
+        typical_brake_g: 1.2
+        
+      lateral_axis:
+        direction: "Left/Right cornering"
+        typically_symmetric: true
+        typical_value_g: 1.0
+        
+    combined_envelope:
+      formula: |
+        For braking + cornering (a_x < 0):
+          (a_x / a_brake_max)² + (a_y / a_lat_max)² ≤ 1
+          
+        For acceleration + cornering (a_x > 0):
+          (a_x / a_accel_max)² + (a_y / a_lat_max)² ≤ 1
+          
+    visualization: |
+      The envelope looks like an ellipse, wider in the braking direction,
+      narrower in acceleration, with left/right being symmetric.
+      
+               a_y (lateral)
+                    ↑
+                    |    ___
+                    | /      \
+         ──────────●──────────→ a_x (longitudinal)
+           brake  | \  ___/    accel
+                    |
+                    ↓
+                    
+  # ---------------------------------------------------------------------------
+  # 5.4 SAFETY MARGINS
+  # ---------------------------------------------------------------------------
+  safety_margins:
+    
+    rationale: |
+      Operating at the friction limit leaves no margin for:
+      - Surface variations
+      - Driver corrections
+      - Unexpected inputs (bump, gust)
+      - Tire temperature/wear variations
+      
+    margin_factors:
+      
+      - factor: "combined_grip_margin"
+        value: 0.85
+        rationale: |
+          Operate at 85% of friction ellipse maximum.
+          This provides 15% reserve for corrections.
+          
+      - factor: "transition_margin"
+        value: 0.80
+        applies_when: "Transitioning from braking to cornering or vice versa"
+        rationale: |
+          Transitions are highest-risk moments.
+          Weight transfer is dynamic, grip is changing.
+          
+      - factor: "corner_phase_margins"
+        entry: 0.75                        # Conservative during turn-in
+        apex: 0.85                         # Steady state, more confidence
+        exit: 0.80                         # Throttle application is sensitive
+        
+  # ---------------------------------------------------------------------------
+  # 5.5 COMPUTED LIMITS
+  # ---------------------------------------------------------------------------
+  computed_limits:
+    
+    friction_envelope:
+      formula: "√(a_x² + a_y²) ≤ margin × μ × g"
+      
+    per_phase_limits:
+      
+      corner_entry:
+        description: "Trail braking zone"
+        a_x_range: "[-a_brake_max, 0]"
+        a_y_range: "Increasing from 0 to a_y_required"
+        constraint: "(a_x/a_brake)² + (a_y/a_lat)² ≤ 0.75²"
+        
+      corner_apex:
+        description: "Maximum lateral load"
+        a_x_range: "Near 0 (maintenance throttle)"
+        a_y_range: "At or near maximum"
+        constraint: "(a_x/a_accel)² + (a_y/a_lat)² ≤ 0.85²"
+        
+      corner_exit:
+        description: "Acceleration out of corner"
+        a_x_range: "[0, a_accel_max]"
+        a_y_range: "Decreasing from a_y_apex to 0"
+        constraint: "(a_x/a_accel)² + (a_y/a_lat)² ≤ 0.80²"
+        
+    available_grip_computation:
+      given_lateral:
+        formula: "a_x_available = √((margin × μ × g)² - a_y²)"
+        
+      given_longitudinal:
+        formula: "a_y_available = √((margin × μ × g)² - a_x²)"
+        
+  # ---------------------------------------------------------------------------
+  # 5.6 CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  constraints:
+    
+    - constraint: "√(a_x² + a_y²) ≤ envelope_radius"
+      description: "Combined acceleration within envelope"
+      enforcement: "Hard ceiling"
+      
+    - constraint: "No simultaneous max braking and max cornering"
+      description: "Friction circle prevents this"
+      enforcement: "Physics"
+      
+    - constraint: "Grip utilization tracked continuously"
+      description: "Real-time monitoring of envelope usage"
+      enforcement: "Confidence reduction when near limit"
+
+# =============================================================================
+# SECTION 6: VEHICLE PARAMETERS
+# =============================================================================
+
+vehicle_parameters:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 DEFAULT VALUES
+  # ---------------------------------------------------------------------------
+  defaults:
+    
+    description: |
+      These are conservative defaults for an unknown vehicle.
+      Actual vehicle configuration should override these.
+      
+    mass:
+      value: 1500
+      unit: "kg"
+      range: "[800, 2500]"
+      
+    wheelbase:
+      value: 2.7
+      unit: "m"
+      range: "[2.0, 3.5]"
+      
+    cg_height:
+      value: 0.5
+      unit: "m"
+      range: "[0.3, 0.7]"
+      note: "Center of gravity height above ground"
+      
+    track_width:
+      value: 1.6
+      unit: "m"
+      range: "[1.2, 2.0]"
+      note: "Distance between left and right wheels"
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 FRICTION COEFFICIENTS
+  # ---------------------------------------------------------------------------
+  friction:
+    
+    default_dry:
+      value: 1.0
+      unit: "dimensionless"
+      description: "Conservative default for dry asphalt"
+      
+    ranges:
+      economy_tire_dry: "[0.8, 1.0]"
+      performance_tire_dry: "[1.0, 1.2]"
+      racing_slick_dry: "[1.2, 1.5]"
+      
+    surface_modifiers:
+      concrete: 0.95                      # Slightly less than asphalt
+      painted_lines: 0.70                 # Reduced grip
+      
+    note: |
+      Friction coefficient is the most critical parameter.
+      Overestimating μ leads to dangerous advice.
+      Always use conservative values.
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 ACCELERATION LIMITS
+  # ---------------------------------------------------------------------------
+  acceleration_limits:
+    
+    default:
+      braking_max_g: 1.0
+      acceleration_max_g: 0.6
+      lateral_max_g: 1.0
+      
+    conservative:
+      braking_max_g: 0.85
+      acceleration_max_g: 0.5
+      lateral_max_g: 0.85
+      
+    with_aero:
+      description: "Speed-dependent due to downforce"
+      formula: "a_max(v) = a_max_base + k_aero × v²"
+      note: "Only for high-downforce vehicles with known aero"
+
+# =============================================================================
+# SECTION 7: ENVELOPE INTERACTIONS
+# =============================================================================
+
+envelope_interactions:
+
+  description: |
+    The four envelopes (corner speed, braking, steering, combined grip)
+    interact and constrain each other. This section defines those interactions.
+    
+  # ---------------------------------------------------------------------------
+  # 7.1 CORNER SPEED ↔ BRAKING
+  # ---------------------------------------------------------------------------
+  corner_braking_interaction:
+    
+    relationship: |
+      Braking distance depends on the target corner speed.
+      Lower corner speed → less braking distance needed.
+      Higher corner speed → more braking distance needed.
+      
+    constraint: |
+      brake_point = corner_entry_distance - braking_distance(v_current, v_corner)
+      
+    consistency_check: |
+      If brake_point < 0 (would need to brake before current position),
+      the corner speed envelope may be set too high, or approach speed
+      assumption is wrong.
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 CORNER SPEED ↔ COMBINED GRIP
+  # ---------------------------------------------------------------------------
+  corner_grip_interaction:
+    
+    relationship: |
+      Corner speed determines required lateral acceleration.
+      Required: a_lat = v² / R
+      Maximum: a_lat_max from combined grip envelope
+      
+    constraint: |
+      v² / R ≤ margin × a_lat_max
+      Therefore: v ≤ √(margin × a_lat_max × R)
+      
+    this_is_the_corner_speed_equation: true
+    
+  # ---------------------------------------------------------------------------
+  # 7.3 BRAKING ↔ COMBINED GRIP
+  # ---------------------------------------------------------------------------
+  braking_grip_interaction:
+    
+    relationship: |
+      During trail braking, grip is shared between braking and cornering.
+      As lateral load increases, available braking decreases.
+      
+    constraint: |
+      a_brake_available = √(a_max² - a_lat²)
+      
+    implication: |
+      Braking distance calculation must account for reduced braking
+      capability during corner entry when lateral load is building.
+      
+    trail_braking_model:
+      phases:
+        - phase: "Initial braking (straight)"
+          a_lat: 0
+          a_brake: "maximum"
+          
+        - phase: "Turn-in begins"
+          a_lat: "increasing"
+          a_brake: "must decrease"
+          
+        - phase: "Apex"
+          a_lat: "maximum"
+          a_brake: "near zero or slight"
+          
+  # ---------------------------------------------------------------------------
+  # 7.4 STEERING ↔ COMBINED GRIP
+  # ---------------------------------------------------------------------------
+  steering_grip_interaction:
+    
+    relationship: |
+      Steering input generates lateral acceleration.
+      Steering envelope ensures lateral acceleration stays within grip.
+      
+    constraint: |
+      Steering envelope is derived FROM combined grip envelope:
+      δ_max ← a_lat_max ← friction ellipse
+      
+    consistency: |
+      If steering envelope is obeyed, lateral grip is automatically respected.
+      The steering envelope is a more driver-accessible representation
+      of the combined grip constraint.
+
+# =============================================================================
+# SECTION 8: CONFIDENCE AND UNCERTAINTY
+# =============================================================================
+
+confidence_uncertainty:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 ENVELOPE CONFIDENCE
+  # ---------------------------------------------------------------------------
+  envelope_confidence:
+    
+    sources_of_uncertainty:
+      
+      - source: "friction_coefficient"
+        uncertainty: "±15%"
+        impact: "HIGH - directly scales all envelopes"
+        
+      - source: "track_geometry"
+        uncertainty: "From geometry builder"
+        impact: "HIGH - affects corner radius, hence corner speed"
+        
+      - source: "vehicle_parameters"
+        uncertainty: "±10% if not configured"
+        impact: "MEDIUM - affects weight transfer, some limits"
+        
+      - source: "sensor_accuracy"
+        uncertainty: "From sensor reality model"
+        impact: "MEDIUM - affects real-time utilization tracking"
+        
+    combined_confidence:
+      formula: |
+        envelope_confidence = 
+          friction_confidence × 
+          geometry_confidence × 
+          vehicle_confidence × 
+          sensor_confidence
+          
+  # ---------------------------------------------------------------------------
+  # 8.2 CONFIDENCE EFFECTS ON MARGINS
+  # ---------------------------------------------------------------------------
+  confidence_margin_relationship:
+    
+    description: |
+      Lower confidence → larger safety margins → more conservative envelopes.
+      This ensures system remains safe even when uncertain.
+      
+    formula: |
+      effective_margin = base_margin × confidence
+      
+    example:
+      base_margin: 0.85
+      confidence: 0.80
+      effective_margin: "0.85 × 0.80 = 0.68"
+      
+    floor:
+      minimum_margin: 0.60
+      rationale: "Never operate above 60% of theoretical maximum when uncertain"
+      
+  # ---------------------------------------------------------------------------
+  # 8.3 UNCERTAINTY PROPAGATION
+  # ---------------------------------------------------------------------------
+  uncertainty_propagation:
+    
+    corner_speed:
+      formula: "v_max = √(μ × g × R)"
+      uncertainty: "δv/v = ½ × √((δμ/μ)² + (δR/R)²)"
+      
+      example:
+        mu_uncertainty: "15%"
+        R_uncertainty: "10%"
+        v_uncertainty: "½ × √(0.15² + 0.10²) = 9%"
+        
+    braking_distance:
+      formula: "d = v² / (2 × μ × g)"
+      uncertainty: "δd/d = √((2 × δv/v)² + (δμ/μ)²)"
+      
+      example:
+        v_uncertainty: "5%"
+        mu_uncertainty: "15%"
+        d_uncertainty: "√((2 × 0.05)² + 0.15²) = 18%"
+        
+    implication: |
+      Small uncertainties in inputs lead to larger uncertainties in outputs.
+      Safety margins must account for this propagation.
+
+# =============================================================================
+# SECTION 9: ENVELOPE OUTPUT FORMAT
+# =============================================================================
+
+output_format:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 PER-SEGMENT ENVELOPE
+  # ---------------------------------------------------------------------------
+  per_segment:
+    
+    format: "SegmentEnvelope"
+    
+    fields:
+      segment_id: "Integer"
+      segment_type: "STRAIGHT | CORNER_ENTRY | CORNER_APEX | ..."
+      
+      corner_speed:
+        v_max_theoretical_mps: "Float32"
+        v_max_envelope_mps: "Float32"
+        margin_applied: "Float32"
+        
+      braking:
+        a_max_theoretical_g: "Float32"
+        a_max_envelope_g: "Float32"
+        
+      steering:
+        yaw_rate_max_dps: "Float32"
+        yaw_rate_envelope_dps: "Float32"
+        
+      combined_grip:
+        a_total_max_g: "Float32"
+        a_total_envelope_g: "Float32"
+        
+      confidence: "Float32"
+      
+  # ---------------------------------------------------------------------------
+  # 9.2 PER-CORNER ENVELOPE
+  # ---------------------------------------------------------------------------
+  per_corner:
+    
+    format: "CornerEnvelope"
+    
+    fields:
+      corner_id: "Integer"
+      corner_name: "String"
+      
+      geometry:
+        apex_radius_m: "Float32"
+        entry_distance_m: "Float64"
+        apex_distance_m: "Float64"
+        exit_distance_m: "Float64"
+        
+      speeds:
+        approach_expected_mps: "Float32"
+        entry_max_mps: "Float32"
+        apex_max_mps: "Float32"
+        exit_max_mps: "Float32"
+        
+      braking:
+        brake_point_m: "Float64"
+        braking_distance_m: "Float32"
+        decel_required_g: "Float32"
+        
+      confidence: "Float32"
+      
+  # ---------------------------------------------------------------------------
+  # 9.3 REAL-TIME UTILIZATION
+  # ---------------------------------------------------------------------------
+  real_time:
+    
+    format: "EnvelopeUtilization"
+    update_rate_hz: 10
+    
+    fields:
+      timestamp_ms: "Integer"
+      
+      current:
+        speed_mps: "Float32"
+        a_long_g: "Float32"
+        a_lat_g: "Float32"
+        yaw_rate_dps: "Float32"
+        
+      envelope:
+        speed_limit_mps: "Float32"
+        a_long_limit_g: "Float32"
+        a_lat_limit_g: "Float32"
+        combined_limit_g: "Float32"
+        
+      utilization:
+        speed_percent: "Float32"
+        longitudinal_percent: "Float32"
+        lateral_percent: "Float32"
+        combined_percent: "Float32"
+        
+      flags:
+        approaching_limit: "Boolean (>85%)"
+        at_limit: "Boolean (>95%)"
+        exceeded: "Boolean (>100%)"
+
+# =============================================================================
+# END OF CONTROLLABILITY ENVELOPES SPECIFICATION
+# =============================================================================
+#
+# SUMMARY OF ENVELOPES:
+#
+# 1. CORNER SPEED: v_max = margin × √(μ × g × R)
+#    Physics: Centripetal force must not exceed tire grip
+#    Margin: 60-85% depending on confidence
+#
+# 2. BRAKING LIMITS: a_max = margin × μ × g
+#    Physics: Deceleration limited by tire friction
+#    Margin: 85% base, +10% distance buffer
+#
+# 3. STEERING INTENSITY: δ_max = f(speed), decreasing
+#    Physics: High-speed steering needs less angle for same lateral g
+#    Margin: Speed-dependent, 70-90%
+#
+# 4. COMBINED GRIP: √(a_x² + a_y²) ≤ margin × μ × g
+#    Physics: Friction circle - grip is shared
+#    Margin: 75-85% depending on phase
+#
+# SAFETY INVARIANT:
+# All envelopes enforce: computed_limit ≤ physics_limit × margin
+# Margin ensures driver has reserve for corrections.
+# Envelope is a CEILING, not a TARGET.
+#
+# =============================================================================
