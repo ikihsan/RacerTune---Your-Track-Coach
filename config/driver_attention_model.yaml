@@ -1,0 +1,1124 @@
+# =============================================================================
+# DRIVER ATTENTION MODEL
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: The driver is a limited-attention system.
+# Speech competes with driving for cognitive resources.
+# Every utterance has a cost. Silence has value.
+#
+# CORE INSIGHT:
+#   A driver at 200 km/h has approximately 0.5 seconds to react.
+#   Processing speech takes 0.3-0.5 seconds.
+#   Speech during critical moments REDUCES safety, not increases it.
+#
+# THEREFORE:
+#   Silence is not a failure to help.
+#   Silence is often the CORRECT behavior.
+#   Speech is a privilege, not a default.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "ATTENTION_MODEL"
+
+# =============================================================================
+# SECTION 1: COGNITIVE LOAD THEORY
+# =============================================================================
+
+cognitive_load_theory:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 DRIVER AS LIMITED-CAPACITY SYSTEM
+  # ---------------------------------------------------------------------------
+  limited_capacity:
+    
+    model: |
+      The driver has a finite pool of attention.
+      This pool is shared between:
+        - Visual processing (track, mirrors, gauges)
+        - Motor control (steering, pedals, shifting)
+        - Tactical decisions (line, braking points, overtaking)
+        - Audio processing (engine, tires, external sounds)
+        - Speech comprehension (coaching input)
+        
+    total_capacity: 100  # Arbitrary units
+    
+    capacity_allocation:
+      visual_processing: 30
+      motor_control: 25
+      tactical_decisions: 20
+      situational_awareness: 15
+      audio_processing: 10
+      
+    available_for_speech: |
+      Speech comprehension borrows from the audio and tactical pools.
+      Available capacity ≈ 10-20 units in normal driving.
+      Available capacity → 0 in high-workload situations.
+      
+  # ---------------------------------------------------------------------------
+  # 1.2 ATTENTION DYNAMICS
+  # ---------------------------------------------------------------------------
+  attention_dynamics:
+    
+    attention_switching:
+      cost: "0.3-0.5 seconds to switch attention domains"
+      implication: |
+        When driver processes speech, they temporarily reduce
+        attention to visual/motor tasks. This creates a brief
+        window of reduced situational awareness.
+        
+    recovery_time:
+      after_speech: "0.5-1.0 seconds to return to full attention"
+      implication: |
+        The cost of speech extends beyond the utterance duration.
+        A 1-second phrase has 1.5-2.0 seconds total impact.
+        
+    cumulative_load:
+      description: |
+        Repeated utterances accumulate cognitive load.
+        The driver cannot fully recover between rapid messages.
+        This leads to attention fatigue and reduced performance.
+        
+  # ---------------------------------------------------------------------------
+  # 1.3 WORKLOAD PHASES
+  # ---------------------------------------------------------------------------
+  workload_phases:
+    
+    high_workload:
+      description: "Driver fully occupied with immediate task"
+      examples:
+        - "Corner entry (braking + turn-in)"
+        - "Corner apex (maximum lateral load)"
+        - "Overtaking maneuver"
+        - "Incident avoidance"
+        - "High-speed section (200+ km/h)"
+      available_attention: "Near zero"
+      speech_policy: "FORBIDDEN"
+      
+    medium_workload:
+      description: "Driver engaged but has some spare capacity"
+      examples:
+        - "Straight-line driving"
+        - "Steady-state cornering (familiar corner)"
+        - "Cruising between corners"
+      available_attention: "10-15 units"
+      speech_policy: "ALLOWED with limits"
+      
+    low_workload:
+      description: "Driver has significant spare capacity"
+      examples:
+        - "Long straight"
+        - "Cool-down lap"
+        - "Behind safety car"
+        - "Formation lap"
+      available_attention: "20+ units"
+      speech_policy: "ALLOWED"
+      
+  # ---------------------------------------------------------------------------
+  # 1.4 STRESS EFFECTS
+  # ---------------------------------------------------------------------------
+  stress_effects:
+    
+    under_stress:
+      description: |
+        When stressed (close racing, difficult conditions, fatigue),
+        available cognitive capacity decreases significantly.
+        
+      capacity_reduction: "30-50%"
+      
+      implications:
+        - "Fewer resources for speech processing"
+        - "Longer processing time"
+        - "Higher chance of mishearing"
+        - "Irritation from interruption"
+        
+    stress_indicators:
+      measurable:
+        - "High sustained g-forces"
+        - "Rapid sequential maneuvers"
+        - "Deviation flags active"
+        - "Near-limit driving (grip utilization > 80%)"
+        
+      inferred:
+        - "Multiple corners in quick succession"
+        - "Unfamiliar track section"
+        - "First laps of session"
+
+# =============================================================================
+# SECTION 2: WHEN SPEECH IS ALLOWED
+# =============================================================================
+
+speech_allowed:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 ALLOWED CONDITIONS
+  # ---------------------------------------------------------------------------
+  allowed_conditions:
+    
+    all_required:
+      - condition: "workload_phase == LOW or MEDIUM"
+        rationale: "Driver has available attention"
+        
+      - condition: "no_deviation_flags_active"
+        rationale: "Not in an error state (needs to focus on recovery)"
+        
+      - condition: "confidence >= speech_confidence_threshold"
+        rationale: "Information is reliable enough to share"
+        
+      - condition: "cooldown_expired"
+        rationale: "Not speaking too frequently"
+        
+      - condition: "message_is_relevant"
+        rationale: "Message applies to upcoming situation"
+        
+    formula: |
+      speech_allowed = 
+        (workload <= MEDIUM) AND
+        (deviation_flags == NONE) AND
+        (confidence >= threshold) AND
+        (time_since_last_speech >= cooldown) AND
+        (message.relevance >= minimum_relevance)
+        
+  # ---------------------------------------------------------------------------
+  # 2.2 TIMING WINDOWS
+  # ---------------------------------------------------------------------------
+  timing_windows:
+    
+    description: |
+      Even when speech is allowed, there are optimal windows.
+      Speak during windows, not between them.
+      
+    optimal_windows:
+      
+      straight_mid_section:
+        start: "50m after corner exit"
+        end: "100m before next braking point"
+        quality: "BEST"
+        rationale: "Low workload, stable state"
+        
+      corner_exit_straight:
+        start: "When a_lateral < 0.3g (exiting corner)"
+        end: "Start of next braking zone"
+        quality: "GOOD"
+        rationale: "Workload decreasing"
+        
+      approach_to_braking:
+        start: "Never"
+        end: "N/A"
+        quality: "AVOID"
+        rationale: "Driver preparing for braking"
+        
+    window_detection:
+      method: "State machine based on segment type and vehicle state"
+      inputs:
+        - segment_type
+        - speed
+        - acceleration
+        - distance_to_next_corner
+        
+  # ---------------------------------------------------------------------------
+  # 2.3 MESSAGE TYPES ALLOWED
+  # ---------------------------------------------------------------------------
+  message_types:
+    
+    allowed_anywhere:
+      - type: "CRITICAL_SAFETY"
+        example: "Flag flag flag"
+        condition: "Immediate danger"
+        note: "Overrides all restrictions"
+        
+    allowed_in_windows:
+      - type: "BRAKING_REFERENCE"
+        example: "Brake"
+        timing: "At or before braking point"
+        
+      - type: "CORNER_SPEED"
+        example: "Ninety"
+        timing: "During approach, in window"
+        
+      - type: "SEGMENT_COMPLETE"
+        example: "Good"
+        timing: "After corner exit, in window"
+        
+    never_allowed_during_driving:
+      - type: "LENGTHY_ANALYSIS"
+        example: "Your corner entry was 3 km/h too fast..."
+        reason: "Too long, too complex"
+        
+      - type: "HISTORICAL_COMPARISON"
+        example: "That was slower than your best..."
+        reason: "Irrelevant to current moment"
+        
+      - type: "CONVERSATIONAL"
+        example: "Nice job on that last sector..."
+        reason: "Uses attention without benefit"
+
+# =============================================================================
+# SECTION 3: WHEN SPEECH IS FORBIDDEN
+# =============================================================================
+
+speech_forbidden:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 ABSOLUTE PROHIBITIONS
+  # ---------------------------------------------------------------------------
+  absolute_prohibitions:
+    
+    description: |
+      In these situations, speech is NEVER permitted regardless of
+      message importance. The driver cannot safely process it.
+      
+    prohibitions:
+      
+      - prohibition_id: "P-01"
+        name: "Active braking zone"
+        condition: "a_longitudinal < -0.5g"
+        rationale: |
+          Driver is modulating brake pressure, judging speed,
+          and preparing for turn-in. Maximum cognitive load.
+          Speech here is dangerous distraction.
+          
+      - prohibition_id: "P-02"
+        name: "Corner entry"
+        condition: "segment_type == CORNER_ENTRY AND in_corner"
+        rationale: |
+          Turn-in is the most critical moment. Driver is
+          balancing trail braking with steering input.
+          Absolutely no interruption.
+          
+      - prohibition_id: "P-03"
+        name: "Corner apex"
+        condition: "segment_type == CORNER_APEX"
+        rationale: |
+          Maximum lateral load. Driver holding precise line.
+          Any distraction risks loss of control.
+          
+      - prohibition_id: "P-04"
+        name: "Active deviation"
+        condition: "any deviation_flag.active AND severity >= MEDIUM"
+        rationale: |
+          Driver is already in an error state. They need to
+          focus entirely on recovery, not process speech.
+          Speaking now makes it worse.
+          
+      - prohibition_id: "P-05"
+        name: "Very high speed"
+        condition: "speed > 200 km/h AND segment_type != STRAIGHT"
+        rationale: |
+          Reaction time window is minimal. Driver needs
+          100% visual attention on track.
+          
+      - prohibition_id: "P-06"
+        name: "Rapid sequence"
+        condition: "corners_in_next_5_seconds >= 2"
+        rationale: |
+          Chicane or esses. Continuous high workload.
+          No windows for speech.
+          
+      - prohibition_id: "P-07"
+        name: "Low confidence"
+        condition: "combined_confidence < 0.60"
+        rationale: |
+          If we're not confident in our data, don't speak.
+          Wrong advice is worse than no advice.
+          
+  # ---------------------------------------------------------------------------
+  # 3.2 CONDITIONAL PROHIBITIONS
+  # ---------------------------------------------------------------------------
+  conditional_prohibitions:
+    
+    description: |
+      In these situations, speech is prohibited unless the message
+      meets elevated importance criteria.
+      
+    prohibitions:
+      
+      - prohibition_id: "C-01"
+        name: "Corner exit acceleration"
+        condition: "segment_type == CORNER_EXIT AND a_long > 0.3g"
+        exception: "CRITICAL_SAFETY messages only"
+        rationale: |
+          Driver applying throttle while unwinding steering.
+          Delicate balance. Avoid interruption.
+          
+      - prohibition_id: "C-02"
+        name: "Approach to braking"
+        condition: "distance_to_brake_point < 100m"
+        exception: "BRAKING_REFERENCE only (and only once)"
+        rationale: |
+          Driver mentally preparing for braking.
+          Only brake-related callout permitted.
+          
+      - prohibition_id: "C-03"
+        name: "Recovery from deviation"
+        condition: "deviation_flag cleared within last 2 seconds"
+        exception: "None"
+        rationale: |
+          Driver just recovered from error. Give them
+          time to mentally reset before new input.
+          
+  # ---------------------------------------------------------------------------
+  # 3.3 OVERRIDE: CRITICAL SAFETY
+  # ---------------------------------------------------------------------------
+  critical_safety_override:
+    
+    description: |
+      CRITICAL_SAFETY messages can override most prohibitions.
+      These are situations where NOT speaking is more dangerous.
+      
+    examples:
+      - "Vehicle on track (incident)"
+      - "Yellow flag"
+      - "Debris on racing line"
+      - "Mechanical failure detected"
+      
+    prohibitions_overridden:
+      - "Corner exit"
+      - "High speed"
+      - "Low confidence (if safety issue is certain)"
+      
+    prohibitions_NOT_overridden:
+      - "Active braking (driver can't react anyway)"
+      - "Corner apex (same reason)"
+      
+    delivery_method:
+      - "Use shortest possible phrase"
+      - "Repeat if first attempt may have been missed"
+      - "Maximum urgency tone"
+
+# =============================================================================
+# SECTION 4: FREQUENCY LIMITS
+# =============================================================================
+
+frequency_limits:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 RATE LIMITING PHILOSOPHY
+  # ---------------------------------------------------------------------------
+  philosophy:
+    
+    problem: |
+      Even individually appropriate messages become problematic
+      when delivered too frequently. The driver experiences:
+        - Information overload
+        - Inability to process before next message
+        - Attention fatigue
+        - Irritation and trust erosion
+        
+    solution: |
+      Hard limits on message frequency regardless of content.
+      The system must earn the right to speak again.
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 COOLDOWN PERIODS
+  # ---------------------------------------------------------------------------
+  cooldowns:
+    
+    per_message_type:
+      
+      BRAKING_REFERENCE:
+        cooldown_seconds: 10
+        rationale: "One callout per corner, maximum"
+        per_scope: "Per corner"
+        
+      CORNER_SPEED:
+        cooldown_seconds: 10
+        rationale: "One speed callout per corner"
+        per_scope: "Per corner"
+        
+      SEGMENT_COMPLETE:
+        cooldown_seconds: 15
+        rationale: "Limit positive feedback frequency"
+        per_scope: "Global"
+        
+      DEVIATION_WARNING:
+        cooldown_seconds: 5
+        rationale: "Allow closer repetition for warnings"
+        per_scope: "Per segment type"
+        
+    global_cooldown:
+      minimum_between_any_speech: 3.0
+      unit: "seconds"
+      rationale: |
+        Regardless of type, minimum 3 seconds between utterances.
+        Driver needs time to process and refocus.
+        
+  # ---------------------------------------------------------------------------
+  # 4.3 RATE LIMITS
+  # ---------------------------------------------------------------------------
+  rate_limits:
+    
+    per_lap:
+      maximum_utterances: 15
+      rationale: |
+        On a 90-second lap, this is one message every 6 seconds.
+        This is already frequent. More would be overwhelming.
+        
+      degradation:
+        at_10_remaining: "Reduce to HIGH priority only"
+        at_5_remaining: "Reduce to CRITICAL only"
+        at_0_remaining: "Silence until next lap"
+        
+    per_minute:
+      maximum_utterances: 8
+      rationale: "Absolute ceiling on speech density"
+      
+    per_corner:
+      maximum_utterances: 2
+      types: "One reference + one feedback maximum"
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 FREQUENCY ADAPTATION
+  # ---------------------------------------------------------------------------
+  frequency_adaptation:
+    
+    description: |
+      Adjust frequency limits based on driver state and session phase.
+      
+    session_phase:
+      
+      early_session:
+        laps: "1-3"
+        frequency_modifier: 1.2
+        rationale: "Driver learning track, more guidance helpful"
+        
+      mid_session:
+        laps: "4-10"
+        frequency_modifier: 1.0
+        rationale: "Normal frequency"
+        
+      late_session:
+        laps: "10+"
+        frequency_modifier: 0.7
+        rationale: "Driver knows the track, less needed"
+        
+    performance_based:
+      
+      improving:
+        condition: "Last 3 laps improving"
+        frequency_modifier: 0.8
+        rationale: "Don't interrupt what's working"
+        
+      struggling:
+        condition: "Last 3 laps degrading"
+        frequency_modifier: 1.0
+        rationale: "Normal guidance"
+        
+      consistent:
+        condition: "Last 3 laps within 1% of each other"
+        frequency_modifier: 0.6
+        rationale: "Driver in groove, minimal intervention"
+
+# =============================================================================
+# SECTION 5: PRIORITY RULES
+# =============================================================================
+
+priority_rules:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 MESSAGE PRIORITY LEVELS
+  # ---------------------------------------------------------------------------
+  priority_levels:
+    
+    CRITICAL:
+      value: 4
+      description: "Safety-critical, override most restrictions"
+      examples:
+        - "Flag warning"
+        - "Incident ahead"
+        - "System failure"
+      max_delay_ms: 0
+      preempts_other_speech: true
+      
+    HIGH:
+      value: 3
+      description: "Important for immediate performance"
+      examples:
+        - "Braking point reference"
+        - "Entry speed warning"
+        - "Major deviation detected"
+      max_delay_ms: 1000
+      preempts_other_speech: false
+      
+    MEDIUM:
+      value: 2
+      description: "Useful but not time-critical"
+      examples:
+        - "Corner speed reference"
+        - "Sector time"
+        - "Minor deviation"
+      max_delay_ms: 5000
+      preempts_other_speech: false
+      
+    LOW:
+      value: 1
+      description: "Nice to have, easily dropped"
+      examples:
+        - "Good corner feedback"
+        - "Lap complete"
+        - "General encouragement"
+      max_delay_ms: 10000
+      preempts_other_speech: false
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 PRIORITY ARBITRATION
+  # ---------------------------------------------------------------------------
+  priority_arbitration:
+    
+    rules:
+      
+      - rule: "Higher priority wins"
+        description: |
+          When multiple messages queued, deliver highest priority first.
+          
+      - rule: "Same priority: first in queue wins"
+        description: |
+          FIFO within same priority level.
+          
+      - rule: "Expired messages are dropped"
+        description: |
+          If max_delay exceeded, message is discarded silently.
+          
+      - rule: "Queue depth limit"
+        description: |
+          Maximum 3 messages queued. Oldest/lowest dropped first.
+          
+    preemption:
+      - "CRITICAL preempts MEDIUM/LOW immediately"
+      - "CRITICAL waits for HIGH to complete (brief)"
+      - "HIGH does not preempt other speech"
+      - "MEDIUM/LOW never preempt"
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 PRIORITY DECAY
+  # ---------------------------------------------------------------------------
+  priority_decay:
+    
+    description: |
+      Message priority decays over time. An old message is less
+      relevant and should not block newer, more relevant messages.
+      
+    decay_formula: |
+      effective_priority = base_priority × decay_factor
+      decay_factor = 1.0 - (age_ms / max_delay_ms)
+      
+    effect:
+      - "Fresh message: full priority"
+      - "Half-aged message: half priority"
+      - "Expired message: zero priority (dropped)"
+      
+  # ---------------------------------------------------------------------------
+  # 5.4 CONTEXT-SENSITIVE PRIORITY
+  # ---------------------------------------------------------------------------
+  context_priority:
+    
+    description: |
+      Priority is adjusted based on context. A braking callout
+      is high priority only when approaching braking zone.
+      
+    adjustments:
+      
+      BRAKING_REFERENCE:
+        in_braking_approach: "+1 priority"
+        past_braking_point: "-2 priority (irrelevant)"
+        on_straight_mid: "0 (normal)"
+        
+      CORNER_SPEED:
+        in_corner_approach: "+1 priority"
+        past_corner: "-3 priority (drop)"
+        
+      SEGMENT_COMPLETE:
+        driver_improving: "-1 priority (less needed)"
+        driver_struggling: "+0 (maintain)"
+
+# =============================================================================
+# SECTION 6: SILENCE RULES
+# =============================================================================
+
+silence_rules:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 SILENCE AS DEFAULT
+  # ---------------------------------------------------------------------------
+  silence_default:
+    
+    principle: |
+      The default state is SILENCE.
+      Speech requires justification.
+      Silence needs no justification.
+      
+    implementation: |
+      System starts each moment in silence.
+      Multiple conditions must be TRUE to speak.
+      Any single condition FALSE → remain silent.
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 MANDATORY SILENCE TRIGGERS
+  # ---------------------------------------------------------------------------
+  mandatory_silence:
+    
+    - trigger: "prohibition_active"
+      silence_duration: "Until prohibition clears"
+      
+    - trigger: "cooldown_active"
+      silence_duration: "Until cooldown expires"
+      
+    - trigger: "rate_limit_reached"
+      silence_duration: "Until next time window"
+      
+    - trigger: "no_relevant_message"
+      silence_duration: "Indefinite"
+      
+    - trigger: "confidence_below_threshold"
+      silence_duration: "Until confidence recovers"
+      
+    - trigger: "driver_in_recovery"
+      silence_duration: "2 seconds after deviation clears"
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 PROACTIVE SILENCE
+  # ---------------------------------------------------------------------------
+  proactive_silence:
+    
+    description: |
+      Sometimes a message COULD be delivered but SHOULDN'T be.
+      Proactive silence is choosing not to speak even when allowed.
+      
+    triggers:
+      
+      - trigger: "message_adds_no_value"
+        condition: "Driver already performing optimally for segment"
+        action: "Suppress message"
+        rationale: "Don't interrupt perfection"
+        
+      - trigger: "information_already_known"
+        condition: "Same message delivered recently"
+        action: "Suppress message"
+        rationale: "Redundancy wastes attention"
+        
+      - trigger: "driver_in_flow"
+        condition: "Last N corners executed well, improving trend"
+        action: "Reduce message frequency"
+        rationale: "Don't break concentration"
+        
+      - trigger: "minor_deviation"
+        condition: "Deviation is LOW severity, self-correcting"
+        action: "Suppress warning"
+        rationale: "Driver will notice and correct"
+        
+      - trigger: "upcoming_high_workload"
+        condition: "Demanding section in next 3 seconds"
+        action: "Delay or suppress message"
+        rationale: "Driver needs mental preparation time"
+        
+  # ---------------------------------------------------------------------------
+  # 6.4 SILENCE STREAKS
+  # ---------------------------------------------------------------------------
+  silence_streaks:
+    
+    description: |
+      Long periods of silence are ACCEPTABLE and EXPECTED.
+      The system should not speak just because it hasn't spoken.
+      
+    acceptable_silence_duration:
+      minimum: "No minimum (silence is fine)"
+      maximum: "No maximum (silence is fine)"
+      
+    anti_pattern: |
+      DO NOT implement "speak every N seconds" or "speak every corner".
+      This creates noise, not value.
+      
+    validation: |
+      A well-functioning system may be silent for:
+        - Multiple corners (if driver is executing well)
+        - Entire sectors (if no issues or references)
+        - Most of a lap (experienced driver, familiar track)
+        
+      Silence duration is NOT a bug. It is evidence of appropriate restraint.
+
+# =============================================================================
+# SECTION 7: WHY SILENCE IS CORRECT
+# =============================================================================
+
+why_silence_is_correct:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 COGNITIVE SCIENCE PERSPECTIVE
+  # ---------------------------------------------------------------------------
+  cognitive_science:
+    
+    attention_is_zero_sum:
+      statement: |
+        Every unit of attention spent on speech comprehension is
+        a unit NOT spent on driving. There is no free attention.
+        
+      implication: |
+        Speech has a cost even when content is helpful.
+        The benefit must exceed this cost to be worthwhile.
+        
+    processing_takes_time:
+      statement: |
+        Speech comprehension takes 300-500ms.
+        This creates an attention gap during critical moments.
+        
+      implication: |
+        A 1-second utterance creates ~1.5 seconds of reduced attention.
+        During high-speed driving, this is significant.
+        
+    interruption_costs:
+      statement: |
+        Switching attention domains has a measurable cost.
+        The driver must mentally "context switch" to process speech.
+        
+      implication: |
+        Even helpful messages have a hidden cost of interruption.
+        
+  # ---------------------------------------------------------------------------
+  # 7.2 SAFETY PERSPECTIVE
+  # ---------------------------------------------------------------------------
+  safety_perspective:
+    
+    wrong_moment_speech:
+      statement: |
+        Speech at the wrong moment is not neutral—it's harmful.
+        It distracts at precisely the moment the driver needs focus.
+        
+      example: |
+        "Brake" called 0.5 seconds into the braking zone:
+        - Driver is already braking (obvious from context)
+        - Speech interrupts brake modulation
+        - Driver may momentarily lose focus on turn-in
+        - Net effect: NEGATIVE despite helpful intent
+        
+    silence_is_safe:
+      statement: |
+        Silence never causes an accident.
+        Unnecessary speech can.
+        
+      logic: |
+        If in doubt about whether to speak → don't speak.
+        The cost of unnecessary silence is zero.
+        The cost of unnecessary speech is non-zero.
+        
+    driver_autonomy:
+      statement: |
+        The driver is ultimately responsible for vehicle control.
+        The coach assists but should not command attention.
+        
+      implication: |
+        Let the driver drive. Intervene only when intervention
+        clearly adds value exceeding the attention cost.
+        
+  # ---------------------------------------------------------------------------
+  # 7.3 TRUST PERSPECTIVE
+  # ---------------------------------------------------------------------------
+  trust_perspective:
+    
+    noise_destroys_trust:
+      statement: |
+        Frequent, low-value messages teach the driver to ignore the system.
+        Once trust is lost, even valuable messages are dismissed.
+        
+      psychology: |
+        "Cry wolf" effect. Each unnecessary message makes the
+        next message less likely to be heeded.
+        
+    precision_builds_trust:
+      statement: |
+        Rare, well-timed, accurate messages build trust.
+        The driver learns "when it speaks, it matters."
+        
+      goal: |
+        Every utterance should be valuable enough that the
+        driver is glad it was spoken. If not, it shouldn't be.
+        
+    silent_competence:
+      statement: |
+        A coaching system that speaks rarely but accurately
+        is perceived as more competent than one that chatters.
+        
+      analogy: |
+        The best pit crews communicate sparingly.
+        Every word has meaning. Silence is confidence.
+        
+  # ---------------------------------------------------------------------------
+  # 7.4 PRACTICAL EXAMPLES
+  # ---------------------------------------------------------------------------
+  examples:
+    
+    example_1:
+      scenario: "Driver enters corner 2 km/h over recommended speed"
+      naive_response: "Speak: 'Entry too fast'"
+      correct_response: "SILENCE"
+      rationale: |
+        - 2 km/h is within normal variation
+        - Driver is already in the corner (too late to adjust)
+        - Speaking now distracts during the corner
+        - Driver will feel it and self-correct next lap
+        - The message adds no value and costs attention
+        
+    example_2:
+      scenario: "Driver brakes 5m past optimal braking point"
+      naive_response: "Speak: 'Late braking'"
+      correct_response: "SILENCE"
+      rationale: |
+        - 5m is within acceptable margin
+        - Driver is already braking (too late to adjust)
+        - Speaking during braking is forbidden
+        - Message would be criticism without actionable guidance
+        
+    example_3:
+      scenario: "Driver is on a personal best lap"
+      naive_response: "Speak: 'Great lap! Personal best pace!'"
+      correct_response: "SILENCE"
+      rationale: |
+        - Driver knows they're fast (can feel it)
+        - Speaking may break concentration
+        - If they crash after we spoke, we contributed
+        - Celebrate AFTER the lap is complete
+        
+    example_4:
+      scenario: "Driver is 10 km/h over corner envelope, 50m before corner"
+      naive_response: "Speak: 'Entry too fast'"
+      correct_response: "SPEAK (if confident)"
+      rationale: |
+        - Deviation is significant (10 km/h = 15%+)
+        - There is time to react (50m at 150 km/h = 1.2 seconds)
+        - Message is actionable (driver can brake harder)
+        - Benefit exceeds attention cost
+        
+  # ---------------------------------------------------------------------------
+  # 7.5 THE SILENCE CRITERION
+  # ---------------------------------------------------------------------------
+  silence_criterion:
+    
+    test: |
+      Before speaking, answer this question:
+      
+      "Will the driver be glad I said this?"
+      
+      If uncertain → SILENCE
+      If no → SILENCE
+      If yes, but timing is wrong → SILENCE (defer or drop)
+      If yes, and timing is right → SPEAK
+      
+    formalization: |
+      value = benefit - attention_cost - timing_penalty - trust_cost
+      
+      IF value > threshold THEN speak
+      ELSE silence
+      
+    default: |
+      When in doubt, the correct answer is SILENCE.
+
+# =============================================================================
+# SECTION 8: ATTENTION BUDGET
+# =============================================================================
+
+attention_budget:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 BUDGET CONCEPT
+  # ---------------------------------------------------------------------------
+  concept:
+    
+    description: |
+      Model the driver's attention as a budget that depletes when
+      processing speech and regenerates during silence.
+      
+    mechanics:
+      - "Each utterance costs attention units"
+      - "Silence regenerates attention units"
+      - "High workload consumes baseline attention"
+      - "When budget is low, speech is prohibited"
+      
+  # ---------------------------------------------------------------------------
+  # 8.2 BUDGET PARAMETERS
+  # ---------------------------------------------------------------------------
+  parameters:
+    
+    maximum_budget: 100
+    
+    baseline_consumption:
+      low_workload: 20
+      medium_workload: 50
+      high_workload: 90
+      
+    available_for_speech:
+      low_workload: 80
+      medium_workload: 50
+      high_workload: 10
+      
+    speech_costs:
+      short_phrase: 20   # "Brake"
+      medium_phrase: 35  # "Brake... fifty"
+      long_phrase: 50    # "Brake at one hundred"
+      
+    regeneration:
+      per_second_of_silence: 15
+      per_second_low_workload: 20
+      
+  # ---------------------------------------------------------------------------
+  # 8.3 BUDGET GATING
+  # ---------------------------------------------------------------------------
+  budget_gating:
+    
+    logic: |
+      available = maximum_budget - baseline_consumption
+      
+      IF message.cost > available THEN
+        suppress message (insufficient budget)
+      ELSE
+        deliver message
+        budget -= message.cost
+        
+    recovery: |
+      Each second of silence:
+        budget += regeneration_rate
+        budget = min(budget, maximum_budget)
+        
+  # ---------------------------------------------------------------------------
+  # 8.4 BUDGET PROTECTION
+  # ---------------------------------------------------------------------------
+  budget_protection:
+    
+    reserve:
+      description: "Always maintain reserve for CRITICAL messages"
+      reserve_amount: 30
+      effect: |
+        non_critical_available = available - reserve
+        Only CRITICAL can use reserve
+        
+    deficit_recovery:
+      description: "If budget goes negative, enter extended silence"
+      recovery_time: "2× normal regeneration time"
+      rationale: "Driver needs extra time to recover"
+
+# =============================================================================
+# SECTION 9: STATE MACHINE
+# =============================================================================
+
+state_machine:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 SPEECH CONTROLLER STATES
+  # ---------------------------------------------------------------------------
+  states:
+    
+    SILENT:
+      description: "Default state. No speech in progress or pending."
+      transitions:
+        - to: EVALUATING
+          trigger: "message_queued"
+          
+    EVALUATING:
+      description: "Message queued, evaluating whether to speak"
+      transitions:
+        - to: SPEAKING
+          condition: "all_checks_pass AND window_open"
+        - to: DEFERRED
+          condition: "checks_pass BUT window_closed"
+        - to: SILENT
+          condition: "checks_fail OR message_expired"
+          
+    DEFERRED:
+      description: "Message waiting for appropriate window"
+      transitions:
+        - to: SPEAKING
+          trigger: "window_opens AND message_still_valid"
+        - to: SILENT
+          trigger: "message_expires OR priority_displaced"
+          
+    SPEAKING:
+      description: "Utterance in progress"
+      transitions:
+        - to: COOLDOWN
+          trigger: "utterance_complete"
+          
+    COOLDOWN:
+      description: "Post-speech cooldown period"
+      transitions:
+        - to: SILENT
+          trigger: "cooldown_expires"
+          
+  # ---------------------------------------------------------------------------
+  # 9.2 STATE INVARIANTS
+  # ---------------------------------------------------------------------------
+  invariants:
+    
+    - invariant: "Only one message can be in SPEAKING state"
+    - invariant: "Maximum 3 messages in DEFERRED state"
+    - invariant: "COOLDOWN duration ≥ global_cooldown_minimum"
+    - invariant: "Transition EVALUATING → SPEAKING requires all checks"
+
+# =============================================================================
+# SECTION 10: SUMMARY
+# =============================================================================
+
+summary:
+
+  core_principles:
+    
+    1: |
+      The driver is a LIMITED-ATTENTION system.
+      Speech competes with driving for cognitive resources.
+      
+    2: |
+      SILENCE is the default and often correct behavior.
+      Speech requires justification; silence needs none.
+      
+    3: |
+      Speech at the WRONG MOMENT is worse than no speech.
+      Timing is as important as content.
+      
+    4: |
+      TRUST is built by precision, destroyed by noise.
+      Every unnecessary message erodes trust.
+      
+    5: |
+      When in doubt, SILENCE.
+      The cost of unnecessary silence is zero.
+      
+  allowed_summary: |
+    Speech is allowed when:
+    - Workload is low/medium
+    - No deviation flags active
+    - Confidence is sufficient
+    - Cooldown has expired
+    - Timing window is open
+    - Message adds clear value
+    
+  forbidden_summary: |
+    Speech is forbidden during:
+    - Active braking
+    - Corner entry/apex
+    - Active deviation recovery
+    - Very high speed
+    - Rapid corner sequence
+    - Low confidence
+    
+  frequency_summary: |
+    - Global cooldown: 3 seconds minimum
+    - Per-lap limit: ~15 utterances
+    - Per-corner limit: 2 utterances
+    - Frequency decreases as driver improves
+    
+  priority_summary: |
+    CRITICAL > HIGH > MEDIUM > LOW
+    - Only CRITICAL overrides prohibitions
+    - Messages expire if not delivered in time
+    - Queue depth limited to 3
+    
+  silence_summary: |
+    Silence is correct when:
+    - Any speaking condition is not met
+    - Message adds no value over silence
+    - Driver is performing well
+    - Deviation is minor and self-correcting
+    - Timing would disrupt concentration
+
+# =============================================================================
+# END OF DRIVER ATTENTION MODEL
+# =============================================================================
