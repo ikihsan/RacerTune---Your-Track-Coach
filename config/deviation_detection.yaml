@@ -1,0 +1,1329 @@
+# =============================================================================
+# DEVIATION DETECTION AND SHORT-HORIZON PREDICTION
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# PURPOSE: Detect deviations from safe envelope BEFORE they become dangerous.
+# OUTPUT: Binary flags only. No sentences, no voice logic.
+#
+# DESIGN PRINCIPLES:
+#   1. Deterministic: Same inputs → same flags, always
+#   2. Explainable: Every flag has traceable cause
+#   3. Conservative: Prefer false negatives over false positives
+#   4. Confidence-gated: Low confidence suppresses flags
+#
+# THIS LAYER DOES NOT:
+#   - Generate voice output (separate system)
+#   - Provide coaching advice
+#   - Interpret driver intent
+#   - Make subjective judgments
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "DETECTION_SYSTEM"
+
+# =============================================================================
+# SECTION 1: SYSTEM ARCHITECTURE
+# =============================================================================
+
+architecture:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 INPUT SOURCES
+  # ---------------------------------------------------------------------------
+  inputs:
+    
+    real_time:
+      update_rate_hz: 50
+      sources:
+        - name: "current_speed_mps"
+          type: "Float32"
+          source: "Sensor fusion"
+          
+        - name: "current_acceleration_g"
+          type: "Vector3 (x, y, z)"
+          source: "IMU filtered"
+          
+        - name: "current_yaw_rate_dps"
+          type: "Float32"
+          source: "Gyroscope"
+          
+        - name: "current_position"
+          type: "TrackPosition (distance_m, lateral_m)"
+          source: "Localization"
+          
+        - name: "current_segment"
+          type: "SegmentInfo"
+          source: "Geometry lookup"
+          
+    envelope:
+      sources:
+        - name: "segment_envelope"
+          type: "SegmentEnvelope"
+          source: "Controllability envelopes"
+          
+        - name: "corner_envelope"
+          type: "CornerEnvelope"
+          source: "Controllability envelopes"
+          
+    confidence:
+      sources:
+        - name: "position_confidence"
+          type: "Float32 [0,1]"
+          
+        - name: "envelope_confidence"
+          type: "Float32 [0,1]"
+          
+        - name: "sensor_confidence"
+          type: "Float32 [0,1]"
+          
+  # ---------------------------------------------------------------------------
+  # 1.2 OUTPUT FLAGS
+  # ---------------------------------------------------------------------------
+  outputs:
+    
+    format: "DeviationFlags"
+    
+    flags:
+      - ENTRY_TOO_FAST
+      - STEERING_TOO_AGGRESSIVE
+      - LATE_BRAKING
+      - ABRUPT_THROTTLE
+      
+    per_flag_data:
+      active: "Boolean"
+      severity: "LOW | MEDIUM | HIGH"
+      confidence: "Float32 [0,1]"
+      trigger_value: "Float32 (what triggered)"
+      threshold_value: "Float32 (what was limit)"
+      segment_id: "Integer"
+      timestamp_ms: "Integer"
+      
+    suppression_state:
+      suppressed: "Boolean"
+      suppression_reason: "String"
+      
+  # ---------------------------------------------------------------------------
+  # 1.3 PROCESSING PIPELINE
+  # ---------------------------------------------------------------------------
+  pipeline:
+    
+    stages:
+      
+      - stage: 1
+        name: "Input Validation"
+        action: "Verify all inputs present and within valid ranges"
+        on_failure: "Suppress all flags, log error"
+        
+      - stage: 2
+        name: "Confidence Check"
+        action: "Compute combined confidence, gate if below threshold"
+        threshold: 0.60
+        on_failure: "Suppress all flags"
+        
+      - stage: 3
+        name: "Deviation Computation"
+        action: "Calculate deviation metrics for each flag type"
+        output: "Raw deviation values"
+        
+      - stage: 4
+        name: "Threshold Comparison"
+        action: "Compare deviations to conservative thresholds"
+        output: "Raw flag states"
+        
+      - stage: 5
+        name: "Persistence Filter"
+        action: "Require deviation to persist before flagging"
+        output: "Filtered flag states"
+        
+      - stage: 6
+        name: "False Positive Suppression"
+        action: "Apply suppression rules"
+        output: "Final flag states"
+        
+      - stage: 7
+        name: "Output Generation"
+        action: "Package flags with metadata"
+        output: "DeviationFlags structure"
+
+# =============================================================================
+# SECTION 2: FLAG DEFINITIONS
+# =============================================================================
+
+flag_definitions:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 ENTRY_TOO_FAST
+  # ---------------------------------------------------------------------------
+  ENTRY_TOO_FAST:
+    
+    description: |
+      Driver is approaching a corner at a speed that will require
+      excessive braking or will exceed the corner's speed envelope.
+      
+    detection_window:
+      start: "100m before corner entry"
+      end: "Corner entry point"
+      
+    trigger_conditions:
+      
+      primary:
+        name: "Speed exceeds entry envelope"
+        formula: "current_speed > corner_entry_speed × (1 + threshold)"
+        threshold: 0.05  # 5% over envelope
+        
+      secondary:
+        name: "Insufficient braking distance"
+        formula: "remaining_distance < required_braking_distance × margin"
+        margin: 1.15  # Need 15% more distance than available
+        
+      tertiary:
+        name: "Predicted apex speed exceeds limit"
+        formula: "predicted_apex_speed > apex_envelope × 1.05"
+        prediction_method: "Kinematic projection"
+        
+    severity_levels:
+      
+      LOW:
+        condition: "5-10% over envelope"
+        interpretation: "Minor correction needed"
+        
+      MEDIUM:
+        condition: "10-20% over envelope OR braking margin < 1.10"
+        interpretation: "Significant correction needed"
+        
+      HIGH:
+        condition: ">20% over envelope OR braking margin < 1.00"
+        interpretation: "Cannot make corner at current trajectory"
+        
+    equations:
+      
+      required_braking_distance:
+        formula: "d = (v_current² - v_target²) / (2 × a_brake_envelope)"
+        where:
+          v_current: "Current speed (m/s)"
+          v_target: "Corner entry speed from envelope (m/s)"
+          a_brake_envelope: "Envelope braking deceleration (m/s²)"
+          
+      predicted_apex_speed:
+        formula: "v_apex = √(v_current² - 2 × a_assumed × d_to_apex)"
+        where:
+          a_assumed: "Conservative assumed deceleration"
+          d_to_apex: "Distance to corner apex"
+          
+    persistence:
+      minimum_duration_ms: 200
+      sample_count: 10  # At 50Hz
+      
+  # ---------------------------------------------------------------------------
+  # 2.2 STEERING_TOO_AGGRESSIVE
+  # ---------------------------------------------------------------------------
+  STEERING_TOO_AGGRESSIVE:
+    
+    description: |
+      Driver's steering rate or yaw rate exceeds what is safe for
+      the current speed, risking snap oversteer or loss of front grip.
+      
+    detection_window:
+      context: "Any time vehicle is moving"
+      
+    trigger_conditions:
+      
+      primary:
+        name: "Yaw rate exceeds envelope"
+        formula: "abs(yaw_rate) > yaw_rate_envelope × (1 + threshold)"
+        threshold: 0.10  # 10% over envelope
+        
+      secondary:
+        name: "Yaw rate change too rapid"
+        formula: "abs(d_yaw_rate/dt) > yaw_acceleration_limit"
+        yaw_acceleration_limit_dps2: 500  # degrees/s²
+        
+      tertiary:
+        name: "Lateral acceleration exceeds grip"
+        formula: "abs(a_lateral) > a_lateral_envelope × (1 + threshold)"
+        threshold: 0.10
+        
+    severity_levels:
+      
+      LOW:
+        condition: "10-15% over envelope"
+        interpretation: "Near limit but manageable"
+        
+      MEDIUM:
+        condition: "15-25% over envelope OR rapid yaw change"
+        interpretation: "Grip limit approached"
+        
+      HIGH:
+        condition: ">25% over envelope"
+        interpretation: "Likely exceeding grip"
+        
+    equations:
+      
+      yaw_rate_envelope:
+        formula: "ω_max = (μ × g) / v"
+        where:
+          mu: "Friction coefficient"
+          g: "9.81 m/s²"
+          v: "Current speed (m/s)"
+        note: "From controllability_envelopes.yaml"
+        
+      yaw_acceleration:
+        formula: "α = (ω_current - ω_previous) / dt"
+        filter: "3-sample moving average"
+        
+    persistence:
+      minimum_duration_ms: 100
+      sample_count: 5
+      
+    special_rules:
+      
+      - rule: "Speed threshold"
+        condition: "v < 20 km/h"
+        action: "Suppress flag (low-speed maneuvering)"
+        
+      - rule: "Transition allowance"
+        condition: "Within 50ms of direction change"
+        action: "Increase threshold by 20%"
+        
+  # ---------------------------------------------------------------------------
+  # 2.3 LATE_BRAKING
+  # ---------------------------------------------------------------------------
+  LATE_BRAKING:
+    
+    description: |
+      Driver has not begun braking at the point where braking is
+      required to achieve the corner entry speed.
+      
+    detection_window:
+      start: "Calculated brake point + margin"
+      end: "Corner entry point"
+      
+    trigger_conditions:
+      
+      primary:
+        name: "Past brake point without braking"
+        formula: |
+          (current_distance > brake_point + margin) AND
+          (a_longitudinal > -brake_threshold)
+        margin_m: 10  # 10m past calculated brake point
+        brake_threshold_g: 0.3  # Not braking if less than 0.3g decel
+        
+      secondary:
+        name: "Braking but insufficient"
+        formula: |
+          (current_distance > brake_point) AND
+          (abs(a_longitudinal) < required_decel × 0.70)
+        interpretation: "Braking at less than 70% of required rate"
+        
+      tertiary:
+        name: "Projected overshoot"
+        formula: |
+          projected_entry_speed > entry_envelope × 1.10
+        prediction: "Based on current decel rate and distance"
+        
+    severity_levels:
+      
+      LOW:
+        condition: "10-20m past brake point, minimal braking"
+        interpretation: "Should begin braking now"
+        
+      MEDIUM:
+        condition: "20-40m past OR projected 10-20% over entry speed"
+        interpretation: "Hard braking required"
+        
+      HIGH:
+        condition: ">40m past OR projected >20% over entry speed"
+        interpretation: "May not achieve entry speed"
+        
+    equations:
+      
+      brake_point:
+        formula: "brake_point = corner_entry_distance - braking_distance"
+        source: "From controllability_envelopes.yaml corner output"
+        
+      projected_entry_speed:
+        formula: |
+          IF a_braking < 0:
+            v_entry = √(v_current² + 2 × a_braking × d_remaining)
+          ELSE:
+            v_entry = v_current  # Not slowing
+        where:
+          a_braking: "Current longitudinal acceleration (negative for braking)"
+          d_remaining: "Distance to corner entry"
+          
+      required_deceleration:
+        formula: "a_req = (v_current² - v_entry²) / (2 × d_remaining)"
+        
+    persistence:
+      minimum_duration_ms: 150
+      sample_count: 8
+      
+    special_rules:
+      
+      - rule: "Already at correct speed"
+        condition: "v_current ≤ v_entry × 1.02"
+        action: "Suppress flag (no braking needed)"
+        
+      - rule: "Lift-off coasting"
+        condition: "a_longitudinal ∈ [-0.3g, 0] AND d_remaining > 50m"
+        action: "Delay flag (driver may be coasting to brake point)"
+        
+  # ---------------------------------------------------------------------------
+  # 2.4 ABRUPT_THROTTLE
+  # ---------------------------------------------------------------------------
+  ABRUPT_THROTTLE:
+    
+    description: |
+      Driver is applying throttle too aggressively, risking wheelspin,
+      snap oversteer on exit, or exceeding traction limits.
+      
+    detection_window:
+      context: "During corner (entry through exit) and acceleration zones"
+      
+    trigger_conditions:
+      
+      primary:
+        name: "Throttle application rate too high"
+        formula: "d_acceleration/dt > throttle_rate_limit"
+        rate_limit_g_per_s: 5.0  # 5g/s = 0 to 1g in 200ms
+        
+      secondary:
+        name: "Longitudinal acceleration exceeds envelope while cornering"
+        formula: |
+          (a_longitudinal > a_long_available) AND
+          (abs(a_lateral) > 0.3g)
+        where:
+          a_long_available: "From friction ellipse: √(a_max² - a_lat²)"
+          
+      tertiary:
+        name: "Combined grip exceeds envelope"
+        formula: "√(a_long² + a_lat²) > combined_envelope × (1 + threshold)"
+        threshold: 0.08  # 8% over
+        
+    severity_levels:
+      
+      LOW:
+        condition: "Throttle rate 5-8 g/s OR 8-12% combined over"
+        interpretation: "Aggressive but manageable"
+        
+      MEDIUM:
+        condition: "Throttle rate 8-12 g/s OR 12-20% combined over"
+        interpretation: "Risking traction loss"
+        
+      HIGH:
+        condition: "Throttle rate >12 g/s OR >20% combined over"
+        interpretation: "Likely traction loss"
+        
+    equations:
+      
+      throttle_rate:
+        formula: "rate = (a_long_current - a_long_previous) / dt"
+        filter: "5-sample moving average to reject noise"
+        
+      available_longitudinal:
+        formula: "a_long_available = √((margin × μ × g)² - a_lat²)"
+        from: "Friction ellipse in controllability_envelopes.yaml"
+        
+      combined_utilization:
+        formula: "util = √(a_long² + a_lat²) / (margin × μ × g)"
+        
+    persistence:
+      minimum_duration_ms: 100
+      sample_count: 5
+      
+    special_rules:
+      
+      - rule: "Straight line"
+        condition: "abs(a_lateral) < 0.1g"
+        action: "Use higher threshold (no cornering load)"
+        modified_threshold: 0.15
+        
+      - rule: "Low speed"
+        condition: "v < 30 km/h"
+        action: "Increase rate limit 50% (parking lot)"
+
+# =============================================================================
+# SECTION 3: CONSERVATIVE THRESHOLDS
+# =============================================================================
+
+thresholds:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 THRESHOLD PHILOSOPHY
+  # ---------------------------------------------------------------------------
+  philosophy:
+    
+    principle: |
+      Thresholds are set CONSERVATIVELY to avoid false alarms.
+      A missed flag is better than a false flag.
+      False flags destroy trust; missed flags are natural variation.
+      
+    approach:
+      - "Start with envelope + margin"
+      - "Add hysteresis to prevent flicker"
+      - "Require persistence before flagging"
+      - "Gate on confidence"
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 PRIMARY THRESHOLDS
+  # ---------------------------------------------------------------------------
+  primary_thresholds:
+    
+    ENTRY_TOO_FAST:
+      speed_over_envelope_pct:
+        trigger: 5
+        clear: 2
+        hysteresis: 3
+      braking_margin_under:
+        trigger: 1.15
+        clear: 1.25
+        
+    STEERING_TOO_AGGRESSIVE:
+      yaw_over_envelope_pct:
+        trigger: 10
+        clear: 5
+        hysteresis: 5
+      lateral_g_over_envelope_pct:
+        trigger: 10
+        clear: 5
+        hysteresis: 5
+      yaw_acceleration_limit_dps2:
+        value: 500
+        
+    LATE_BRAKING:
+      distance_past_brake_point_m:
+        trigger: 10
+        clear: 0  # Clear when braking detected
+      decel_ratio_minimum:
+        trigger: 0.70
+        clear: 0.85
+        
+    ABRUPT_THROTTLE:
+      throttle_rate_limit_g_per_s:
+        trigger: 5.0
+        clear: 3.0
+      combined_over_envelope_pct:
+        trigger: 8
+        clear: 4
+        hysteresis: 4
+        
+  # ---------------------------------------------------------------------------
+  # 3.3 SEVERITY THRESHOLDS
+  # ---------------------------------------------------------------------------
+  severity_thresholds:
+    
+    description: |
+      Once a flag is triggered, severity is determined by how far
+      beyond the trigger threshold the deviation extends.
+      
+    ENTRY_TOO_FAST:
+      LOW: "5-10% over"
+      MEDIUM: "10-20% over"
+      HIGH: ">20% over"
+      
+    STEERING_TOO_AGGRESSIVE:
+      LOW: "10-15% over"
+      MEDIUM: "15-25% over"
+      HIGH: ">25% over"
+      
+    LATE_BRAKING:
+      LOW: "10-20m past"
+      MEDIUM: "20-40m past"
+      HIGH: ">40m past"
+      
+    ABRUPT_THROTTLE:
+      LOW: "rate 5-8 g/s OR 8-12% combined"
+      MEDIUM: "rate 8-12 g/s OR 12-20% combined"
+      HIGH: "rate >12 g/s OR >20% combined"
+      
+  # ---------------------------------------------------------------------------
+  # 3.4 HYSTERESIS
+  # ---------------------------------------------------------------------------
+  hysteresis:
+    
+    purpose: |
+      Prevent flag flickering when value oscillates near threshold.
+      Trigger threshold is higher than clear threshold.
+      
+    implementation:
+      trigger_condition: "value > trigger_threshold"
+      clear_condition: "value < clear_threshold"
+      relationship: "clear_threshold = trigger_threshold - hysteresis"
+      
+    example:
+      description: "ENTRY_TOO_FAST speed threshold"
+      trigger: "speed > envelope × 1.05"
+      clear: "speed < envelope × 1.02"
+      behavior: |
+        Flag triggers at 5% over.
+        Flag clears when drops below 2% over.
+        Values between 2-5% maintain previous state.
+
+# =============================================================================
+# SECTION 4: PERSISTENCE FILTERING
+# =============================================================================
+
+persistence_filtering:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 PURPOSE
+  # ---------------------------------------------------------------------------
+  purpose:
+    
+    problem: |
+      Single-sample spikes (sensor noise, transients) can trigger
+      false flags. A momentary 6% over that immediately returns to
+      normal is not a deviation worth flagging.
+      
+    solution: |
+      Require the deviation to persist for minimum duration before
+      flagging. This filters out transients while catching real issues.
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 PERSISTENCE REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  requirements:
+    
+    ENTRY_TOO_FAST:
+      minimum_duration_ms: 200
+      minimum_samples: 10
+      rationale: "Approach speed changes slowly; 200ms is meaningful"
+      
+    STEERING_TOO_AGGRESSIVE:
+      minimum_duration_ms: 100
+      minimum_samples: 5
+      rationale: "Steering events are faster; need quicker response"
+      
+    LATE_BRAKING:
+      minimum_duration_ms: 150
+      minimum_samples: 8
+      rationale: "Braking decision should be deliberate"
+      
+    ABRUPT_THROTTLE:
+      minimum_duration_ms: 100
+      minimum_samples: 5
+      rationale: "Throttle events are fast; need quicker response"
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 IMPLEMENTATION
+  # ---------------------------------------------------------------------------
+  implementation:
+    
+    algorithm: "Consecutive sample counter"
+    
+    logic: |
+      IF condition_met:
+        counter++
+        IF counter >= minimum_samples:
+          flag = TRUE
+      ELSE:
+        counter = 0
+        IF flag AND clear_condition:
+          flag = FALSE
+          
+    reset_behavior:
+      on_clear: "Counter resets to 0"
+      on_flag: "Counter continues incrementing (for duration tracking)"
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 SEVERITY LATCHING
+  # ---------------------------------------------------------------------------
+  severity_latching:
+    
+    description: |
+      Severity can increase during an event but does not decrease
+      until the flag clears. This prevents severity flickering.
+      
+    logic: |
+      current_severity = max(current_severity, computed_severity)
+      
+      On flag clear:
+        severity = NONE
+        
+    rationale: |
+      Once a HIGH severity event begins, it should be treated as HIGH
+      even if it momentarily dips to MEDIUM conditions.
+
+# =============================================================================
+# SECTION 5: FALSE POSITIVE SUPPRESSION
+# =============================================================================
+
+false_positive_suppression:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 SUPPRESSION PHILOSOPHY
+  # ---------------------------------------------------------------------------
+  philosophy:
+    
+    goal: |
+      Minimize false positives to maintain driver trust.
+      A flag that triggers incorrectly teaches the driver to ignore flags.
+      
+    approach:
+      - "Identify known false positive scenarios"
+      - "Apply context-aware suppression"
+      - "Track and log suppressed flags for analysis"
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 GLOBAL SUPPRESSION CONDITIONS
+  # ---------------------------------------------------------------------------
+  global_suppression:
+    
+    - condition: "combined_confidence < 0.60"
+      suppresses: "ALL flags"
+      reason: "Insufficient confidence in data"
+      
+    - condition: "position_confidence < 0.50"
+      suppresses: "ALL flags"
+      reason: "Cannot reliably determine position"
+      
+    - condition: "sensor_health != GOOD"
+      suppresses: "ALL flags"
+      reason: "Sensor data unreliable"
+      
+    - condition: "in_pit_lane == TRUE"
+      suppresses: "ALL flags"
+      reason: "Pit lane behavior is different"
+      
+    - condition: "session_paused == TRUE"
+      suppresses: "ALL flags"
+      reason: "Not in active driving"
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 FLAG-SPECIFIC SUPPRESSION
+  # ---------------------------------------------------------------------------
+  flag_specific_suppression:
+    
+    ENTRY_TOO_FAST:
+      
+      - condition: "speed < 30 km/h"
+        reason: "Low-speed maneuvering"
+        
+      - condition: "segment_type == STRAIGHT"
+        reason: "Not approaching corner"
+        
+      - condition: "distance_to_corner > 150m"
+        reason: "Too far from corner for entry prediction"
+        
+      - condition: "corner_confidence < 0.70"
+        reason: "Corner geometry uncertain"
+        
+      - condition: "driver_is_braking AND a_brake > 0.8g"
+        reason: "Hard braking in progress (will slow)"
+        
+    STEERING_TOO_AGGRESSIVE:
+      
+      - condition: "speed < 20 km/h"
+        reason: "Low-speed maneuvering"
+        
+      - condition: "in_hairpin AND speed < 40 km/h"
+        reason: "Hairpins require aggressive steering"
+        
+      - condition: "avoiding_incident == TRUE"
+        reason: "Emergency maneuver (if detectable)"
+        
+      - condition: "within 50ms of zero-crossing"
+        reason: "Direction change transition"
+        
+    LATE_BRAKING:
+      
+      - condition: "speed ≤ corner_entry_speed × 1.02"
+        reason: "Already at correct speed"
+        
+      - condition: "corner_type == UPHILL_ENTRY"
+        reason: "Uphill provides natural braking"
+        
+      - condition: "segment_type != CORNER_ENTRY"
+        reason: "Not approaching corner entry"
+        
+      - condition: "brake_point_confidence < 0.70"
+        reason: "Brake point uncertain"
+        
+    ABRUPT_THROTTLE:
+      
+      - condition: "segment_type == STRAIGHT AND a_lat < 0.1g"
+        reason: "Straight-line acceleration"
+        
+      - condition: "speed < 30 km/h"
+        reason: "Low-speed launch"
+        
+      - condition: "exiting_pit == TRUE"
+        reason: "Pit exit acceleration"
+        
+      - condition: "corner_phase != EXIT"
+        reason: "Not in acceleration zone"
+        
+  # ---------------------------------------------------------------------------
+  # 5.4 TEMPORAL SUPPRESSION
+  # ---------------------------------------------------------------------------
+  temporal_suppression:
+    
+    cooldown:
+      description: |
+        After a flag triggers, suppress re-triggering for same corner
+        for a short period to prevent flag spam.
+        
+      duration_ms: 3000
+      scope: "Per corner"
+      
+    rate_limit:
+      description: |
+        Maximum flags per rolling window to prevent overload.
+        
+      max_flags_per_minute: 10
+      action_on_limit: "Suppress lowest severity flags"
+      
+  # ---------------------------------------------------------------------------
+  # 5.5 SUPPRESSION LOGGING
+  # ---------------------------------------------------------------------------
+  suppression_logging:
+    
+    format:
+      timestamp_ms: "Integer"
+      flag_type: "String"
+      would_have_triggered: "Boolean"
+      trigger_value: "Float32"
+      suppression_reason: "String"
+      confidence_at_suppression: "Float32"
+      
+    purpose: |
+      Track what was suppressed to:
+      - Tune thresholds if too many suppressions
+      - Identify systematic issues
+      - Audit system behavior
+
+# =============================================================================
+# SECTION 6: CONFIDENCE GATING
+# =============================================================================
+
+confidence_gating:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 CONFIDENCE SOURCES
+  # ---------------------------------------------------------------------------
+  confidence_sources:
+    
+    position_confidence:
+      description: "How certain are we of current position?"
+      sources:
+        - GPS fix quality
+        - Localization algorithm confidence
+        - Segment match confidence
+      range: "[0, 1]"
+      
+    envelope_confidence:
+      description: "How certain are we of the envelope limits?"
+      sources:
+        - Geometry confidence
+        - Learning tier
+        - Friction estimate confidence
+      range: "[0, 1]"
+      
+    sensor_confidence:
+      description: "How reliable is sensor data?"
+      sources:
+        - IMU calibration state
+        - GPS HDOP
+        - Sensor health flags
+      range: "[0, 1]"
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 COMBINED CONFIDENCE
+  # ---------------------------------------------------------------------------
+  combined_confidence:
+    
+    formula: |
+      combined = min(
+        position_confidence,
+        envelope_confidence,
+        sensor_confidence
+      )
+      
+    rationale: |
+      Use minimum because a chain is only as strong as its weakest link.
+      If ANY confidence is low, overall detection is unreliable.
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 GATING THRESHOLDS
+  # ---------------------------------------------------------------------------
+  gating_thresholds:
+    
+    full_detection:
+      threshold: 0.80
+      behavior: "All flags can trigger normally"
+      
+    reduced_detection:
+      threshold: 0.60
+      behavior: |
+        - Only HIGH severity flags can trigger
+        - Thresholds increased by 20%
+        - Persistence requirements doubled
+        
+    minimal_detection:
+      threshold: 0.40
+      behavior: |
+        - Only ENTRY_TOO_FAST (HIGH) can trigger
+        - All other flags suppressed
+        - This is safety-critical minimum
+        
+    no_detection:
+      threshold: 0.00
+      behavior: |
+        - All flags suppressed
+        - Log confidence failure
+        - System in degraded mode
+        
+  # ---------------------------------------------------------------------------
+  # 6.4 CONFIDENCE-ADJUSTED THRESHOLDS
+  # ---------------------------------------------------------------------------
+  confidence_adjustment:
+    
+    formula: |
+      adjusted_threshold = base_threshold × (1 + (1 - confidence) × 0.5)
+      
+    effect:
+      at_confidence_1.0: "threshold unchanged"
+      at_confidence_0.8: "threshold increased 10%"
+      at_confidence_0.6: "threshold increased 20%"
+      at_confidence_0.4: "threshold increased 30%"
+      
+    rationale: |
+      Lower confidence → higher threshold → harder to trigger flag.
+      This automatically increases conservatism when uncertain.
+      
+  # ---------------------------------------------------------------------------
+  # 6.5 CONFIDENCE RECOVERY
+  # ---------------------------------------------------------------------------
+  confidence_recovery:
+    
+    description: |
+      When confidence drops below threshold, flags are suppressed.
+      When confidence recovers, there's a brief delay before
+      re-enabling flags to ensure stability.
+      
+    recovery_delay_ms: 500
+    
+    logic: |
+      IF confidence crosses above threshold:
+        start recovery timer
+        IF timer completes without dropping below:
+          enable flags at this confidence level
+        ELSE:
+          reset timer
+
+# =============================================================================
+# SECTION 7: SHORT-HORIZON PREDICTION
+# =============================================================================
+
+short_horizon_prediction:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 PREDICTION SCOPE
+  # ---------------------------------------------------------------------------
+  scope:
+    
+    time_horizon: "0.5 to 2.0 seconds ahead"
+    distance_horizon: "Current position to next critical point"
+    
+    purpose: |
+      Predict where the vehicle will be and what state it will have
+      in the near future, to enable early warning.
+      
+    limitations:
+      - "Assumes constant or known deceleration/acceleration"
+      - "Does not predict driver intention"
+      - "Cannot predict external events"
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 KINEMATIC PREDICTION
+  # ---------------------------------------------------------------------------
+  kinematic_prediction:
+    
+    constant_velocity:
+      formula: "s(t) = s_0 + v × t"
+      use_case: "Straight-line cruising"
+      
+    constant_acceleration:
+      formulas:
+        position: "s(t) = s_0 + v_0 × t + ½ × a × t²"
+        velocity: "v(t) = v_0 + a × t"
+      use_case: "Braking or accelerating"
+      
+    corner_prediction:
+      formula: |
+        Assuming circular path with radius R:
+        θ(t) = θ_0 + ω × t
+        s(t) = s_0 + R × θ(t)
+      use_case: "In-corner position prediction"
+      
+  # ---------------------------------------------------------------------------
+  # 7.3 PREDICTION FOR ENTRY_TOO_FAST
+  # ---------------------------------------------------------------------------
+  entry_prediction:
+    
+    method: "Predict speed at corner entry given current state"
+    
+    algorithm: |
+      1. Get current speed v_now, position s_now
+      2. Get distance to corner entry d_entry
+      3. Get current deceleration a (if braking) or 0
+      
+      IF a < 0 (braking):
+        v_predicted = √(v_now² + 2 × a × d_entry)
+      ELSE:
+        v_predicted = v_now  # Assume no speed change
+        
+      4. Compare v_predicted with entry_envelope
+      5. Flag if v_predicted > entry_envelope × threshold
+      
+    lookahead:
+      min_distance_m: 20
+      max_distance_m: 200
+      min_time_s: 0.5
+      max_time_s: 5.0
+      
+  # ---------------------------------------------------------------------------
+  # 7.4 PREDICTION FOR LATE_BRAKING
+  # ---------------------------------------------------------------------------
+  braking_prediction:
+    
+    method: "Predict if current trajectory achieves required entry speed"
+    
+    algorithm: |
+      1. Get distance to brake point d_brake
+      2. Get distance from brake point to entry d_braking
+      3. Get required speed reduction Δv = v_now - v_entry
+      4. Get envelope deceleration a_max
+      
+      required_distance = Δv² / (2 × a_max)
+      
+      IF d_braking < required_distance:
+        # Braking must start before brake point
+        adjusted_brake_point = corner_entry - required_distance
+        
+      IF s_now > adjusted_brake_point AND NOT braking:
+        Flag LATE_BRAKING
+        
+  # ---------------------------------------------------------------------------
+  # 7.5 PREDICTION UNCERTAINTY
+  # ---------------------------------------------------------------------------
+  prediction_uncertainty:
+    
+    sources:
+      - "Measurement noise in current speed"
+      - "Measurement noise in current position"
+      - "Unknown driver intention"
+      - "Unknown future deceleration"
+      
+    handling: |
+      Add uncertainty margin to predictions.
+      Prediction becomes less reliable with distance/time.
+      
+    uncertainty_growth:
+      formula: "σ(t) = σ_0 × (1 + k × t)"
+      where:
+        sigma_0: "Initial measurement uncertainty"
+        k: "Uncertainty growth rate (≈0.5 per second)"
+        
+    conservative_prediction:
+      use: "Upper bound of prediction interval for speed"
+      formula: "v_predicted_conservative = v_predicted + 2 × σ_v"
+
+# =============================================================================
+# SECTION 8: DETERMINISM GUARANTEE
+# =============================================================================
+
+determinism:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 DETERMINISM REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  requirements:
+    
+    - requirement: "Same inputs → Same outputs"
+      description: |
+        Given identical input values, the system produces identical flags.
+        No randomness, no external dependencies, no timing variations.
+        
+    - requirement: "Reproducible from log"
+      description: |
+        Given logged inputs, flags can be exactly reproduced.
+        
+    - requirement: "No hidden state"
+      description: |
+        All state is explicitly defined and logged.
+        No implicit state from timing or external factors.
+        
+  # ---------------------------------------------------------------------------
+  # 8.2 STATE MANAGEMENT
+  # ---------------------------------------------------------------------------
+  state_management:
+    
+    explicit_state:
+      per_flag:
+        - active: "Boolean"
+        - severity: "Enum"
+        - persistence_counter: "Integer"
+        - last_trigger_time_ms: "Integer"
+        - cooldown_remaining_ms: "Integer"
+        
+      global:
+        - combined_confidence: "Float32"
+        - suppression_rate_count: "Integer"
+        - confidence_recovery_timer_ms: "Integer"
+        
+    state_transitions:
+      - "All transitions are deterministic functions of inputs and current state"
+      - "No transitions depend on wall-clock time (use sample counts)"
+      - "No transitions depend on external systems"
+      
+  # ---------------------------------------------------------------------------
+  # 8.3 NUMERICAL STABILITY
+  # ---------------------------------------------------------------------------
+  numerical_stability:
+    
+    - rule: "Use Float32 for all calculations"
+    - rule: "Avoid operations that accumulate error"
+    - rule: "Clamp outputs to valid ranges"
+    - rule: "Use exact comparisons only for integers"
+    - rule: "Use threshold + epsilon for float comparisons"
+    
+    epsilon: 1e-6
+    
+  # ---------------------------------------------------------------------------
+  # 8.4 AUDIT TRAIL
+  # ---------------------------------------------------------------------------
+  audit_trail:
+    
+    per_sample:
+      logged:
+        - timestamp_ms
+        - all_inputs (position, speed, accel, etc.)
+        - all_confidence_values
+        - computed_deviations
+        - threshold_comparisons
+        - persistence_counters
+        - suppression_checks
+        - final_flag_states
+        
+    reproducibility_test:
+      method: |
+        1. Replay logged inputs
+        2. Compare computed flags with logged flags
+        3. Assert exact match
+      frequency: "Every session, offline"
+
+# =============================================================================
+# SECTION 9: EXPLAINABILITY
+# =============================================================================
+
+explainability:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 PER-FLAG EXPLANATION
+  # ---------------------------------------------------------------------------
+  per_flag_explanation:
+    
+    format: "FlagExplanation"
+    
+    fields:
+      flag_type: "ENTRY_TOO_FAST | STEERING_TOO_AGGRESSIVE | ..."
+      
+      trigger:
+        condition_name: "String (e.g., 'Speed exceeds entry envelope')"
+        trigger_value: "Float32 (actual value)"
+        threshold_value: "Float32 (limit value)"
+        exceedance_percent: "Float32 (how far over)"
+        
+      context:
+        segment_id: "Integer"
+        segment_name: "String"
+        distance_to_feature_m: "Float32"
+        current_speed_mps: "Float32"
+        
+      confidence:
+        combined: "Float32"
+        position: "Float32"
+        envelope: "Float32"
+        
+      persistence:
+        samples_over: "Integer"
+        duration_ms: "Integer"
+        
+  # ---------------------------------------------------------------------------
+  # 9.2 SUPPRESSION EXPLANATION
+  # ---------------------------------------------------------------------------
+  suppression_explanation:
+    
+    format: "SuppressionExplanation"
+    
+    fields:
+      flag_type: "String"
+      would_have_triggered: "Boolean"
+      suppression_reason: "String"
+      suppression_category: "CONFIDENCE | CONTEXT | COOLDOWN | RATE_LIMIT"
+      relevant_values:
+        - name: "String"
+          value: "Any"
+          threshold: "Any"
+          
+  # ---------------------------------------------------------------------------
+  # 9.3 DECISION TRACE
+  # ---------------------------------------------------------------------------
+  decision_trace:
+    
+    purpose: |
+      For any flag decision, trace exactly why it was made.
+      
+    format:
+      flag: "String"
+      decision: "TRIGGERED | NOT_TRIGGERED | SUPPRESSED"
+      
+      trace:
+        - step: "Input validation"
+          result: "PASS | FAIL"
+          
+        - step: "Confidence check"
+          combined_confidence: "Float32"
+          threshold: "Float32"
+          result: "PASS | GATED"
+          
+        - step: "Deviation computation"
+          metric: "String"
+          value: "Float32"
+          
+        - step: "Threshold comparison"
+          trigger_threshold: "Float32"
+          result: "OVER | UNDER"
+          
+        - step: "Persistence check"
+          samples: "Integer"
+          required: "Integer"
+          result: "PASS | INSUFFICIENT"
+          
+        - step: "Suppression check"
+          rules_checked: "Integer"
+          suppressed_by: "String | NULL"
+          result: "PASS | SUPPRESSED"
+          
+        - step: "Final decision"
+          result: "TRIGGERED | NOT_TRIGGERED | SUPPRESSED"
+
+# =============================================================================
+# SECTION 10: OUTPUT SPECIFICATION
+# =============================================================================
+
+output_specification:
+
+  # ---------------------------------------------------------------------------
+  # 10.1 FLAG OUTPUT STRUCTURE
+  # ---------------------------------------------------------------------------
+  flag_output:
+    
+    structure: "DeviationFlags"
+    
+    fields:
+      timestamp_ms: "Integer"
+      sample_number: "Integer"
+      
+      flags:
+        ENTRY_TOO_FAST:
+          active: "Boolean"
+          severity: "NONE | LOW | MEDIUM | HIGH"
+          confidence: "Float32"
+          trigger_value: "Float32"
+          threshold_value: "Float32"
+          
+        STEERING_TOO_AGGRESSIVE:
+          active: "Boolean"
+          severity: "NONE | LOW | MEDIUM | HIGH"
+          confidence: "Float32"
+          trigger_value: "Float32"
+          threshold_value: "Float32"
+          
+        LATE_BRAKING:
+          active: "Boolean"
+          severity: "NONE | LOW | MEDIUM | HIGH"
+          confidence: "Float32"
+          trigger_value: "Float32"
+          threshold_value: "Float32"
+          
+        ABRUPT_THROTTLE:
+          active: "Boolean"
+          severity: "NONE | LOW | MEDIUM | HIGH"
+          confidence: "Float32"
+          trigger_value: "Float32"
+          threshold_value: "Float32"
+          
+      metadata:
+        combined_confidence: "Float32"
+        any_flag_active: "Boolean"
+        highest_severity: "NONE | LOW | MEDIUM | HIGH"
+        flags_suppressed: "Integer"
+        
+  # ---------------------------------------------------------------------------
+  # 10.2 OUTPUT RATE
+  # ---------------------------------------------------------------------------
+  output_rate:
+    
+    detection_rate_hz: 50
+    output_rate_hz: 10  # Decimated for consumers
+    
+    rationale: |
+      Detection runs at full sensor rate for responsiveness.
+      Output is decimated to reduce downstream load.
+      Flags are latched, so decimation doesn't lose events.
+      
+  # ---------------------------------------------------------------------------
+  # 10.3 CONSUMERS
+  # ---------------------------------------------------------------------------
+  consumers:
+    
+    - consumer: "Voice Arbitration"
+      uses: "Flag active and severity"
+      does_not_use: "Threshold values, confidence details"
+      
+    - consumer: "Audit Log"
+      uses: "All fields"
+      
+    - consumer: "Post-Session Analysis"
+      uses: "All fields plus explanations"
+
+# =============================================================================
+# END OF DEVIATION DETECTION SPECIFICATION
+# =============================================================================
+#
+# SUMMARY:
+#
+# FLAGS DETECTED:
+#   - ENTRY_TOO_FAST: Speed > entry envelope, insufficient braking distance
+#   - STEERING_TOO_AGGRESSIVE: Yaw rate > envelope for speed
+#   - LATE_BRAKING: Past brake point without adequate braking
+#   - ABRUPT_THROTTLE: Throttle rate too high, exceeding combined grip
+#
+# CONSERVATIVE APPROACH:
+#   - Thresholds set with margin (5-10% over envelope)
+#   - Hysteresis prevents flicker (trigger ≠ clear threshold)
+#   - Persistence required (100-200ms of sustained deviation)
+#   - False positive suppression for known scenarios
+#
+# CONFIDENCE GATING:
+#   - Combined confidence from position, envelope, sensors
+#   - < 0.60: All flags suppressed
+#   - < 0.80: Only HIGH severity, increased thresholds
+#   - ≥ 0.80: Normal detection
+#
+# DETERMINISM:
+#   - Same inputs → same flags (always)
+#   - All state explicit and logged
+#   - Reproducible from audit log
+#
+# EXPLAINABILITY:
+#   - Every flag has traceable trigger condition
+#   - Every suppression has documented reason
+#   - Full decision trace available
+#
+# =============================================================================
