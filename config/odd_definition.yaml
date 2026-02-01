@@ -1,269 +1,896 @@
-# Operational Design Domain (ODD) Definition
+# =============================================================================
+# OPERATIONAL DESIGN DOMAIN (ODD) - FORMAL SPECIFICATION
 # Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
 #
-# This file defines the explicit boundaries within which the system operates.
-# Operation outside these boundaries triggers degradation or shutdown.
+# GOVERNING PRINCIPLE: This specification is BINARY and CONSERVATIVE.
+# If any condition is ambiguous, the answer is NO (do not operate).
+# If any value is borderline, round toward safety.
+#
+# This document defines the COMPLETE set of conditions under which the
+# system may operate. Operation outside these bounds is PROHIBITED.
+#
+# =============================================================================
 
-version: "1.0"
+version: "2.0"
 revision_date: "2026-02-02"
+classification: "SAFETY_CRITICAL"
 
 # =============================================================================
-# OPERATIONAL BOUNDARIES
+# SECTION 1: ALLOWED ENVIRONMENTS
 # =============================================================================
+# These conditions MUST ALL be true for system operation.
+# Failure of ANY condition triggers degradation or shutdown.
 
-operational_boundaries:
-  # Track Type Constraints
-  track:
-    type: "closed_circuit_only"
-    allowed_surfaces:
-      - "asphalt"
-      - "concrete"
-    forbidden_surfaces:
-      - "gravel"
-      - "dirt"
-      - "snow"
-      - "ice"
-    minimum_track_length_m: 500
-    maximum_track_length_m: 25000
-    minimum_corner_radius_m: 10
+allowed_environments:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 TRACK TYPE - MANDATORY CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  track_type:
     
-  # Environmental Constraints
-  environment:
+    # ALLOWED: System may ONLY operate on these track types
+    allowed:
+      - closed_circuit           # Permanent or temporary closed racing circuit
+      - closed_karting_circuit   # Karting tracks (with vehicle=kart config)
+      - closed_test_track        # Private test facilities
+      
+    # The track MUST be:
+    requirements:
+      closed_to_public_traffic: true        # MANDATORY: No public vehicles
+      controlled_access: true               # MANDATORY: Track day/session format
+      defined_boundaries: true              # MANDATORY: Known track limits
+      consistent_surface: true              # MANDATORY: Same surface throughout
+      mapped_or_mappable: true              # MANDATORY: Can build geometry
+      
+    # Track geometry bounds
+    geometry:
+      minimum_length_m: 400                 # Shorter = insufficient data
+      maximum_length_m: 30000               # Longer = Nürburgring-class OK
+      minimum_width_m: 6                    # Narrower = unsafe
+      minimum_corner_radius_m: 8            # Tighter = kart-only
+      maximum_gradient_percent: 25          # Steeper = outside physics model
+
+  # ---------------------------------------------------------------------------
+  # 1.2 SURFACE CONDITIONS - MANDATORY CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  surface:
+    
+    # ALLOWED surface types (system validated for these only)
+    allowed_types:
+      - asphalt_dry              # Standard tarmac, dry condition
+      - concrete_dry             # Concrete surface, dry condition
+      
+    # Surface quality requirements
+    quality_requirements:
+      consistent_grip: true                 # No oil/debris patches
+      no_standing_water: true               # Zero puddles
+      no_surface_damage: true               # No potholes/cracks affecting grip
+      temperature_uniform: true             # No extreme hot/cold spots
+      
+    # Surface temperature bounds
+    temperature:
+      minimum_track_temp_c: 5               # Below = unpredictable grip
+      maximum_track_temp_c: 60              # Above = tire degradation unknown
+      minimum_ambient_temp_c: 0             # Below = ice risk
+      maximum_ambient_temp_c: 45            # Above = heat effects unknown
+
+  # ---------------------------------------------------------------------------
+  # 1.3 WEATHER CONDITIONS - MANDATORY CONSTRAINTS  
+  # ---------------------------------------------------------------------------
+  weather:
+    
+    # ONLY allowed condition
     allowed_conditions:
-      - "dry"
-    forbidden_conditions:
-      - "wet"
-      - "damp"
-      - "standing_water"
-      - "fog"
-      - "snow"
-      - "ice"
-    # Note: Future versions may support wet conditions with separate envelopes
+      - dry                      # ONLY dry conditions supported
+      
+    # Specific requirements
+    requirements:
+      precipitation: none                   # Zero rain/snow/hail
+      track_moisture: none                  # Zero dampness
+      visibility_m: ">500"                  # Must see >500m ahead
+      fog: none                             # Zero fog
+      standing_water: none                  # Zero puddles
+      
+    # Wind constraints
+    wind:
+      maximum_sustained_kmh: 50             # Above = aerodynamic effects unknown
+      maximum_gust_kmh: 70                  # Above = vehicle stability affected
+      
+    # Light conditions (for visibility, not sensor operation)
+    lighting:
+      allowed:
+        - daylight                          # Natural daylight
+        - artificial_track_lighting         # Night sessions with lighting
+      minimum_lux: 50                       # Below = visibility concern
+
+  # ---------------------------------------------------------------------------
+  # 1.4 TIME/SESSION CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  session:
     
-  # Speed Constraints
-  speed:
-    minimum_operational_speed_kmh: 30
-    maximum_supported_speed_kmh: 350
-    # Below minimum: system silent (parking/pit)
-    # Above maximum: system enters degraded mode
-    
-  # Vehicle Type
-  vehicle:
-    supported_types:
-      - "car_closed_wheel"
-      - "car_open_wheel"
-    unsupported_types:
-      - "motorcycle"  # Requires separate physics model
-      - "kart"        # Different dynamics
-    # Motorcycle support requires explicit separate ODD definition
+    # Session types where operation is permitted
+    allowed_session_types:
+      - open_track_day                      # Track day format
+      - test_session                        # Private testing
+      - practice_session                    # Practice/qualifying
+      - timed_session                       # Lap timing sessions
+      
+    # Session requirements
+    requirements:
+      controlled_environment: true          # Marshals/safety present
+      defined_session_boundaries: true      # Clear start/end
+      consistent_rules: true                # No mid-session changes
+      
+    # NOT allowed (system refuses)
+    forbidden_session_types:
+      - competitive_race                    # Race conditions too dynamic
+      - multi_class_mixed                   # Unpredictable traffic
+      - public_road                         # Never on public roads
+      - uncontrolled_environment            # No safety infrastructure
 
 # =============================================================================
-# SENSOR REQUIREMENTS
+# SECTION 2: DISALLOWED ENVIRONMENTS
 # =============================================================================
+# If ANY of these conditions are detected, system MUST NOT operate.
+# These are ABSOLUTE prohibitions with no exceptions.
+
+disallowed_environments:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 ABSOLUTE PROHIBITIONS - IMMEDIATE SHUTDOWN
+  # ---------------------------------------------------------------------------
+  absolute_prohibitions:
+    
+    # Location prohibitions
+    location:
+      - public_road                         # NEVER: Public roads
+      - public_highway                      # NEVER: Highways/motorways
+      - parking_lot                         # NEVER: Parking areas
+      - street                              # NEVER: Any public street
+      - mixed_traffic                       # NEVER: With public vehicles
+      
+    # Surface prohibitions
+    surface:
+      - wet                                 # NEVER: Wet track
+      - damp                                # NEVER: Damp track
+      - standing_water                      # NEVER: Any water
+      - ice                                 # NEVER: Ice
+      - snow                                # NEVER: Snow
+      - gravel                              # NEVER: Loose gravel
+      - dirt                                # NEVER: Dirt/earth
+      - grass                               # NEVER: Grass
+      - mixed_surface                       # NEVER: Surface transitions
+      - oil_contaminated                    # NEVER: Oil on track
+      - debris_present                      # NEVER: Debris on racing line
+      
+    # Weather prohibitions
+    weather:
+      - rain_any_intensity                  # NEVER: Any rain
+      - snow_any_intensity                  # NEVER: Any snow
+      - hail                                # NEVER: Hail
+      - fog_any_density                     # NEVER: Any fog
+      - mist                                # NEVER: Mist
+      - dust_storm                          # NEVER: Dust conditions
+      
+    # Session prohibitions
+    session:
+      - competitive_race                    # NEVER: Wheel-to-wheel racing
+      - qualifying_with_traffic             # NEVER: Multi-car qualifying
+      - endurance_race                      # NEVER: Endurance events
+      - drift_session                       # NEVER: Drift events
+      - rally_stage                         # NEVER: Rally
+      - hillclimb_competitive               # NEVER: Competitive hillclimb
+
+  # ---------------------------------------------------------------------------
+  # 2.2 CONDITIONAL PROHIBITIONS
+  # ---------------------------------------------------------------------------
+  conditional_prohibitions:
+    
+    # Visibility below threshold
+    visibility_below_500m:
+      action: REFUSE_OPERATION
+      reason: "Insufficient visibility for safe operation"
+      
+    # Track not properly mapped
+    track_geometry_unknown:
+      action: REFUSE_COACHING
+      allowed_action: RECORDING_ONLY
+      reason: "Track geometry required for envelope calculation"
+      
+    # Vehicle not calibrated
+    vehicle_not_calibrated:
+      action: REFUSE_OPERATION
+      reason: "Vehicle dynamics unknown"
+
+# =============================================================================
+# SECTION 3: VEHICLE CATEGORIES
+# =============================================================================
+# System behavior differs by vehicle category.
+# Each category has specific physics models and constraints.
+
+vehicle_categories:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 FOUR-WHEELED VEHICLES (PRIMARY SUPPORT)
+  # ---------------------------------------------------------------------------
+  car:
+    
+    # Supported sub-categories
+    supported_types:
+      closed_wheel_car:
+        description: "Standard road car or GT-style race car"
+        physics_model: "car_standard"
+        supported: true
+        
+      open_wheel_car:
+        description: "Formula-style open wheel car"
+        physics_model: "car_open_wheel"
+        supported: true
+        notes: "Higher downforce, different aero characteristics"
+        
+      sports_prototype:
+        description: "LMP-style prototype"
+        physics_model: "car_prototype"
+        supported: true
+        notes: "Extreme aero, requires specific calibration"
+        
+    # Car-specific constraints
+    constraints:
+      minimum_wheelbase_mm: 2000            # Below = kart physics
+      maximum_wheelbase_mm: 3500            # Above = outside model
+      minimum_track_width_mm: 1200          # Below = narrow vehicle
+      maximum_track_width_mm: 2200          # Above = wide body
+      minimum_weight_kg: 500                # Below = use kart model
+      maximum_weight_kg: 2500               # Above = heavy vehicle
+      
+    # Physics model parameters (defaults - vehicle config overrides)
+    physics_defaults:
+      friction_coefficient_dry: 1.0
+      max_lateral_g: 1.5
+      max_longitudinal_g_braking: 1.5
+      max_longitudinal_g_accel: 0.8
+      weight_transfer_factor: 0.15
+      aero_downforce_factor: 0.0            # Override for aero cars
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 KARTS
+  # ---------------------------------------------------------------------------
+  kart:
+    
+    supported_types:
+      rental_kart:
+        description: "Standard rental/arrive-and-drive kart"
+        physics_model: "kart_rental"
+        supported: true
+        
+      owner_kart:
+        description: "Owner-driver kart (shifter/non-shifter)"
+        physics_model: "kart_owner"
+        supported: true
+        
+    # Kart-specific constraints
+    constraints:
+      minimum_wheelbase_mm: 900
+      maximum_wheelbase_mm: 1200
+      minimum_weight_kg: 70                 # Kart only
+      maximum_weight_kg: 250                # Kart + driver
+      
+    # Kart physics differ significantly
+    physics_defaults:
+      friction_coefficient_dry: 0.9         # Less than car tires
+      max_lateral_g: 1.2
+      max_longitudinal_g_braking: 1.0
+      max_longitudinal_g_accel: 0.6
+      weight_transfer_factor: 0.25          # Higher due to short wheelbase
+      no_suspension: true                   # Solid axle dynamics
+      rear_axle_lift: true                  # Inside rear lifts in corners
+      
+    # Kart-specific voice adjustments
+    voice_adjustments:
+      earlier_brake_warning_m: 5            # Karts brake later
+      corner_speed_more_critical: true      # Momentum more important
+      throttle_modulation_emphasis: true    # Smooth throttle critical
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 MOTORCYCLES - NOT SUPPORTED
+  # ---------------------------------------------------------------------------
+  motorcycle:
+    
+    supported: false
+    
+    reason: |
+      Motorcycle dynamics are fundamentally different from four-wheeled vehicles:
+      - Lean angle is primary cornering mechanism
+      - Counter-steering physics
+      - Single-track vehicle dynamics
+      - Rider position affects handling
+      - Different braking physics (front/rear independent)
+      - Suspension behavior differs completely
+      - Traction circle is lean-angle dependent
+      
+      A separate ODD and physics model would be required.
+      This is explicitly OUT OF SCOPE for this system.
+      
+    action: REFUSE_OPERATION
+    error_message: "Motorcycle operation not supported. System designed for four-wheeled vehicles only."
+    
+  # ---------------------------------------------------------------------------
+  # 3.4 OTHER UNSUPPORTED VEHICLES
+  # ---------------------------------------------------------------------------
+  unsupported:
+    
+    three_wheeled:
+      supported: false
+      reason: "Asymmetric dynamics not modeled"
+      action: REFUSE_OPERATION
+      
+    tracked_vehicle:
+      supported: false
+      reason: "Track/tread dynamics not modeled"
+      action: REFUSE_OPERATION
+      
+    amphibious:
+      supported: false
+      reason: "Outside operational scope"
+      action: REFUSE_OPERATION
+      
+    autonomous:
+      supported: false
+      reason: "System is advisory only - requires human driver"
+      action: REFUSE_OPERATION
+
+# =============================================================================
+# SECTION 4: SPEED RANGES
+# =============================================================================
+# Explicit speed boundaries for system operation.
+
+speed_ranges:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 OPERATIONAL SPEED BOUNDS
+  # ---------------------------------------------------------------------------
+  operational:
+    
+    # Below this speed, system is SILENT (pit lane, parking)
+    minimum_operational_kmh: 30
+    
+    # Above this speed, system DEGRADES (outside validated range)
+    maximum_validated_kmh: 300
+    
+    # Above this speed, system REFUSES (physically implausible)
+    maximum_physical_kmh: 400
+    
+  # ---------------------------------------------------------------------------
+  # 4.2 SPEED-DEPENDENT BEHAVIOR
+  # ---------------------------------------------------------------------------
+  behavior_by_speed:
+    
+    stationary:
+      range_kmh: [0, 5]
+      voice: DISABLED
+      learning: DISABLED
+      recording: ENABLED
+      reason: "Vehicle stationary or parking"
+      
+    pit_lane:
+      range_kmh: [5, 30]
+      voice: DISABLED
+      learning: DISABLED
+      recording: ENABLED
+      reason: "Pit lane speeds - no coaching needed"
+      
+    low_speed:
+      range_kmh: [30, 80]
+      voice: ENABLED
+      learning: ENABLED
+      recording: ENABLED
+      confidence_modifier: 1.0
+      reason: "Normal low-speed operation"
+      
+    medium_speed:
+      range_kmh: [80, 150]
+      voice: ENABLED
+      learning: ENABLED
+      recording: ENABLED
+      confidence_modifier: 1.0
+      reason: "Normal medium-speed operation"
+      
+    high_speed:
+      range_kmh: [150, 220]
+      voice: ENABLED
+      learning: ENABLED
+      recording: ENABLED
+      confidence_modifier: 0.95
+      reason: "High-speed operation - slightly reduced confidence"
+      
+    very_high_speed:
+      range_kmh: [220, 300]
+      voice: ENABLED_CRITICAL_ONLY
+      learning: ENABLED
+      recording: ENABLED
+      confidence_modifier: 0.90
+      reason: "Very high speed - voice restricted to critical"
+      
+    extreme_speed:
+      range_kmh: [300, 400]
+      voice: DISABLED
+      learning: DISABLED
+      recording: ENABLED
+      confidence_modifier: 0.5
+      reason: "Extreme speed - outside validated envelope"
+      
+    implausible:
+      range_kmh: [400, 999999]
+      voice: DISABLED
+      learning: DISABLED
+      recording: FLAGGED_INVALID
+      reason: "Speed implausible - likely sensor error"
+
+# =============================================================================
+# SECTION 5: SENSOR QUALITY THRESHOLDS
+# =============================================================================
+# Explicit, binary sensor requirements.
+# ALL thresholds are HARD requirements - no interpolation.
 
 sensor_requirements:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 GPS REQUIREMENTS
+  # ---------------------------------------------------------------------------
   gps:
-    minimum_update_rate_hz: 5
-    preferred_update_rate_hz: 10
-    maximum_acceptable_hdop: 2.0
-    minimum_satellites: 6
-    required_fix_type: "3D"
-    dropout_tolerance_seconds: 2.0
     
+    # MANDATORY minimums - below these = system cannot operate
+    mandatory:
+      minimum_update_rate_hz: 5             # Below = REFUSE_OPERATION
+      minimum_satellites: 4                 # Below = REFUSE_OPERATION
+      fix_type_required: "3D"               # 2D fix = REFUSE_OPERATION
+      maximum_hdop: 3.0                     # Above = REFUSE_OPERATION
+      
+    # Operational thresholds - affect confidence/degradation
+    operational:
+      preferred_update_rate_hz: 10
+      preferred_satellites: 8
+      preferred_hdop: 1.5
+      preferred_accuracy_m: 2.0
+      
+    # Degradation thresholds
+    degradation:
+      reduced_voice_hdop: 2.0               # Above = reduce voice
+      silent_mode_hdop: 2.5                 # Above = silent mode
+      
+    # Dropout handling
+    dropout:
+      maximum_dropout_seconds: 2.0          # Longer = DEGRADE
+      extended_dropout_seconds: 5.0         # Longer = SILENT_MODE
+      critical_dropout_seconds: 10.0        # Longer = RECORDING_ONLY
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 IMU REQUIREMENTS
+  # ---------------------------------------------------------------------------
   imu:
-    minimum_update_rate_hz: 50
-    preferred_update_rate_hz: 100
-    accelerometer_range_g: 8
-    gyroscope_range_dps: 500
-    required_axes: ["x", "y", "z"]
     
-  mounting:
-    stability_required: true
-    orientation_calibration_required: true
-    maximum_orientation_drift_deg: 5
-    vibration_filtering_required: true
-
-# =============================================================================
-# CONFIDENCE THRESHOLDS
-# =============================================================================
-
-confidence_thresholds:
-  # Minimum confidence for various operations
-  track_geometry:
-    minimum_for_operation: 0.7
-    minimum_for_voice_advice: 0.85
-    
-  sensor_fusion:
-    minimum_gps_confidence: 0.6
-    minimum_imu_confidence: 0.7
-    fusion_disagreement_threshold: 0.3
-    
-  physics_envelope:
-    minimum_for_envelope_use: 0.8
-    minimum_for_learning_contribution: 0.9
-    
-  voice_output:
-    minimum_confidence_to_speak: 0.85
-    suppress_below_confidence: 0.7
-
-# =============================================================================
-# DEGRADATION LEVELS
-# =============================================================================
-
-degradation_levels:
-  # Level 0: Full Operation
-  level_0_full:
-    description: "All systems nominal"
-    voice_enabled: true
-    learning_enabled: true
-    envelope_advisory: true
-    
-  # Level 1: Reduced Voice
-  level_1_reduced_voice:
-    description: "Reduced confidence - minimal voice"
-    voice_enabled: true
-    voice_restricted_to: ["critical_warnings"]
-    learning_enabled: false
-    envelope_advisory: true
-    triggers:
-      - "gps_confidence_below_0.7"
-      - "imu_confidence_below_0.8"
+    # MANDATORY minimums
+    mandatory:
+      minimum_update_rate_hz: 50            # Below = REFUSE_OPERATION
+      accelerometer_range_g: 4              # Below = may saturate
+      gyroscope_range_dps: 250              # Below = may saturate
+      axes_required: ["x", "y", "z"]        # All three required
       
-  # Level 2: Silent Advisory
-  level_2_silent:
-    description: "Low confidence - voice disabled"
-    voice_enabled: false
-    learning_enabled: false
-    envelope_advisory: true
-    post_lap_analysis: true
-    triggers:
-      - "gps_confidence_below_0.5"
-      - "sensor_disagreement_detected"
-      - "track_geometry_confidence_below_0.6"
+    # Operational thresholds
+    operational:
+      preferred_update_rate_hz: 100
+      preferred_accelerometer_range_g: 8
+      preferred_gyroscope_range_dps: 500
       
-  # Level 3: Recording Only
-  level_3_recording:
-    description: "Very low confidence - data recording only"
-    voice_enabled: false
-    learning_enabled: false
-    envelope_advisory: false
-    data_recording: true
-    triggers:
-      - "gps_dropout_extended"
-      - "imu_saturation_detected"
-      - "outside_operational_boundaries"
+    # Quality thresholds
+    quality:
+      maximum_noise_floor_mg: 10            # Above = degraded
+      maximum_bias_drift_dps: 1.0           # Above = requires recalibration
+      maximum_temperature_drift_percent: 5  # Above = degraded
       
-  # Level 4: Shutdown
-  level_4_shutdown:
-    description: "System cannot operate safely"
-    all_functions_disabled: true
-    triggers:
-      - "sensor_failure_detected"
-      - "runtime_integrity_violation"
-      - "safety_invariant_violation"
+    # Saturation detection
+    saturation:
+      saturation_threshold_percent: 95      # Flag if >95% of range
+      saturation_action: FLAG_DATA_SUSPECT
+      recovery_time_ms: 500                 # Wait after saturation
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 COMBINED SENSOR REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  combined:
+    
+    # Sensor fusion requirements
+    fusion:
+      maximum_disagreement_mps: 2.0         # Speed disagreement threshold
+      maximum_disagreement_g: 0.3           # Accel disagreement threshold
+      disagreement_action: USE_CONSERVATIVE
+      
+    # Timestamp synchronization
+    synchronization:
+      maximum_time_offset_ms: 50            # GPS-IMU sync requirement
+      resync_required_after_ms: 100         # Force resync if exceeded
 
 # =============================================================================
-# VOICE TIMING CONSTRAINTS
+# SECTION 6: MOUNTING CONSTRAINTS
 # =============================================================================
+# Physical installation requirements.
 
-voice_timing:
-  # Minimum time between voice outputs
-  minimum_interval_seconds: 3.0
+mounting_requirements:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 PHYSICAL MOUNTING
+  # ---------------------------------------------------------------------------
+  physical:
+    
+    # Mounting stability
+    stability:
+      rigid_mount_required: true            # No suction cups
+      vibration_isolation_recommended: true
+      maximum_movement_mm: 2                # During operation
+      
+    # Orientation
+    orientation:
+      calibration_required: true            # Must calibrate on install
+      maximum_roll_offset_deg: 5            # From vehicle axis
+      maximum_pitch_offset_deg: 10          # From vehicle axis
+      maximum_yaw_offset_deg: 5             # From vehicle axis
+      recalibration_trigger_deg: 3          # Drift requiring recal
+      
+    # Location in vehicle
+    location:
+      preferred: "center_of_vehicle"
+      acceptable: "dashboard_center"
+      not_recommended: "a_pillar"
+      forbidden: "loose_placement"
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 ENVIRONMENTAL PROTECTION
+  # ---------------------------------------------------------------------------
+  environmental:
+    
+    # Operating temperature
+    temperature:
+      minimum_operating_c: 0
+      maximum_operating_c: 50
+      thermal_shutdown_c: 60
+      
+    # Ingress protection
+    ingress:
+      minimum_ip_rating: "IP54"             # Dust and splash protected
+      
+    # Power
+    power:
+      voltage_range_v: [10, 16]             # Automotive 12V systems
+      brownout_threshold_v: 9               # Below = graceful shutdown
+      maximum_current_draw_a: 2
+
+# =============================================================================
+# SECTION 7: DEGRADATION CONDITIONS
+# =============================================================================
+# Explicit conditions that trigger reduced functionality.
+# Each condition maps to a specific degradation action.
+
+degradation_conditions:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 CONDITIONS TRIGGERING REDUCED VOICE (Level 1)
+  # ---------------------------------------------------------------------------
+  reduced_voice_triggers:
+    
+    - condition: "gps_hdop > 2.0"
+      action: VOICE_CRITICAL_ONLY
+      reason: "Position accuracy degraded"
+      
+    - condition: "gps_satellites < 6"
+      action: VOICE_CRITICAL_ONLY
+      reason: "Satellite coverage reduced"
+      
+    - condition: "imu_temperature_drift > 3%"
+      action: VOICE_CRITICAL_ONLY
+      reason: "IMU calibration drifting"
+      
+    - condition: "confidence < 0.85"
+      action: VOICE_CRITICAL_ONLY
+      reason: "Overall confidence reduced"
+      
+    - condition: "track_geometry_confidence < 0.8"
+      action: VOICE_CRITICAL_ONLY
+      reason: "Track model confidence low"
+      
+    - condition: "speed > 220 km/h"
+      action: VOICE_CRITICAL_ONLY
+      reason: "High speed operation"
+      
+    - condition: "learning_data_age > 1 hour"
+      action: VOICE_REDUCED_CONFIDENCE
+      reason: "Learned data may be stale"
+
+  # ---------------------------------------------------------------------------
+  # 7.2 CONDITIONS FORCING SILENCE (Level 2)
+  # ---------------------------------------------------------------------------
+  silence_triggers:
+    
+    - condition: "gps_hdop > 2.5"
+      action: VOICE_DISABLED
+      reason: "Position accuracy insufficient for safe advice"
+      
+    - condition: "gps_dropout > 2 seconds"
+      action: VOICE_DISABLED
+      reason: "GPS signal lost"
+      
+    - condition: "sensor_disagreement > threshold"
+      action: VOICE_DISABLED
+      reason: "Sensors disagree - cannot trust data"
+      
+    - condition: "confidence < 0.7"
+      action: VOICE_DISABLED
+      reason: "Confidence too low for advice"
+      
+    - condition: "track_geometry_confidence < 0.6"
+      action: VOICE_DISABLED
+      reason: "Track model unreliable"
+      
+    - condition: "imu_saturation_detected"
+      action: VOICE_DISABLED
+      reason: "IMU data clipped"
+      
+    - condition: "speed > 300 km/h"
+      action: VOICE_DISABLED
+      reason: "Speed outside validated range"
+      
+    - condition: "condition_change_detected"
+      action: VOICE_DISABLED_TEMPORARY
+      duration_laps: 1
+      reason: "Conditions changed - rebuilding confidence"
+
+  # ---------------------------------------------------------------------------
+  # 7.3 CONDITIONS FORCING RECORDING ONLY (Level 3)
+  # ---------------------------------------------------------------------------
+  recording_only_triggers:
+    
+    - condition: "gps_dropout > 5 seconds"
+      action: RECORDING_ONLY
+      reason: "Extended GPS loss"
+      
+    - condition: "gps_hdop > 3.0"
+      action: RECORDING_ONLY
+      reason: "GPS quality unacceptable"
+      
+    - condition: "imu_failure_detected"
+      action: RECORDING_ONLY
+      reason: "IMU not functioning"
+      
+    - condition: "confidence < 0.5"
+      action: RECORDING_ONLY
+      reason: "System confidence too low"
+      
+    - condition: "track_geometry_unknown"
+      action: RECORDING_ONLY
+      reason: "No track model available"
+
+# =============================================================================
+# SECTION 8: SYSTEM REFUSAL CONDITIONS
+# =============================================================================
+# Conditions where system MUST refuse to operate entirely.
+# These are ABSOLUTE - no override possible.
+
+refusal_conditions:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 ENVIRONMENTAL REFUSALS
+  # ---------------------------------------------------------------------------
+  environmental:
+    
+    - condition: "surface_wet"
+      action: REFUSE_ALL_OPERATION
+      message: "Wet conditions detected. System designed for dry conditions only."
+      override_allowed: false
+      
+    - condition: "rain_detected"
+      action: REFUSE_ALL_OPERATION
+      message: "Rain detected. System cannot operate in precipitation."
+      override_allowed: false
+      
+    - condition: "visibility < 500m"
+      action: REFUSE_ALL_OPERATION
+      message: "Visibility insufficient for safe operation."
+      override_allowed: false
+      
+    - condition: "track_type = public_road"
+      action: REFUSE_ALL_OPERATION
+      message: "System prohibited on public roads."
+      override_allowed: false
+      
+    - condition: "ambient_temp < 0°C"
+      action: REFUSE_ALL_OPERATION
+      message: "Temperature below minimum. Ice risk present."
+      override_allowed: false
+
+  # ---------------------------------------------------------------------------
+  # 8.2 VEHICLE REFUSALS
+  # ---------------------------------------------------------------------------
+  vehicle:
+    
+    - condition: "vehicle_type = motorcycle"
+      action: REFUSE_ALL_OPERATION
+      message: "Motorcycle operation not supported."
+      override_allowed: false
+      
+    - condition: "vehicle_not_calibrated"
+      action: REFUSE_COACHING
+      message: "Vehicle calibration required before use."
+      override_allowed: false
+      allowed_mode: CALIBRATION_MODE
+      
+    - condition: "vehicle_type = unknown"
+      action: REFUSE_ALL_OPERATION
+      message: "Vehicle type must be specified."
+      override_allowed: false
+
+  # ---------------------------------------------------------------------------
+  # 8.3 SENSOR REFUSALS
+  # ---------------------------------------------------------------------------
+  sensor:
+    
+    - condition: "gps_rate < 5 Hz"
+      action: REFUSE_ALL_OPERATION
+      message: "GPS update rate insufficient (minimum 5 Hz)."
+      override_allowed: false
+      
+    - condition: "imu_rate < 50 Hz"
+      action: REFUSE_ALL_OPERATION
+      message: "IMU update rate insufficient (minimum 50 Hz)."
+      override_allowed: false
+      
+    - condition: "gps_fix = none"
+      action: REFUSE_ALL_OPERATION
+      message: "No GPS fix available."
+      override_allowed: false
+      
+    - condition: "imu_not_detected"
+      action: REFUSE_ALL_OPERATION
+      message: "IMU not detected."
+      override_allowed: false
+
+  # ---------------------------------------------------------------------------
+  # 8.4 SESSION REFUSALS
+  # ---------------------------------------------------------------------------
+  session:
+    
+    - condition: "session_type = competitive_race"
+      action: REFUSE_ALL_OPERATION
+      message: "System not designed for competitive racing."
+      override_allowed: false
+      
+    - condition: "session_type = unknown"
+      action: REFUSE_COACHING
+      message: "Session type must be specified."
+      override_allowed: false
+      allowed_mode: RECORDING_ONLY
+
+  # ---------------------------------------------------------------------------
+  # 8.5 SAFETY SYSTEM REFUSALS
+  # ---------------------------------------------------------------------------
+  safety:
+    
+    - condition: "safety_invariant_violation"
+      action: REFUSE_ALL_OPERATION
+      message: "Safety invariant violated. System requires restart."
+      override_allowed: false
+      
+    - condition: "physics_calculation_error"
+      action: REFUSE_COACHING
+      message: "Physics calculation error detected."
+      override_allowed: false
+      allowed_mode: RECORDING_ONLY
+      
+    - condition: "runtime_integrity_failure"
+      action: REFUSE_ALL_OPERATION
+      message: "Runtime integrity check failed."
+      override_allowed: false
+
+# =============================================================================
+# SECTION 9: DECISION MATRIX
+# =============================================================================
+# Explicit decision matrix for common scenarios.
+# Format: [condition] -> [action]
+
+decision_matrix:
+
+  # Condition checks are evaluated in order. First match wins.
   
-  # Maximum messages per lap (prevents annoyance)
-  maximum_messages_per_lap: 10
+  startup_checks:
+    - check: "Is GPS available with valid fix?"
+      true_action: CONTINUE
+      false_action: REFUSE_OPERATION
+      
+    - check: "Is IMU available and calibrated?"
+      true_action: CONTINUE
+      false_action: REFUSE_OPERATION
+      
+    - check: "Is vehicle type specified and supported?"
+      true_action: CONTINUE
+      false_action: REFUSE_OPERATION
+      
+    - check: "Is session type allowed?"
+      true_action: CONTINUE
+      false_action: REFUSE_OPERATION
+      
+    - check: "Is track surface dry?"
+      true_action: CONTINUE
+      false_action: REFUSE_OPERATION
+      
+  runtime_checks:
+    - check: "GPS HDOP > 3.0?"
+      true_action: RECORDING_ONLY
+      false_action: CONTINUE
+      
+    - check: "GPS HDOP > 2.5?"
+      true_action: VOICE_DISABLED
+      false_action: CONTINUE
+      
+    - check: "GPS HDOP > 2.0?"
+      true_action: VOICE_CRITICAL_ONLY
+      false_action: CONTINUE
+      
+    - check: "Confidence < 0.5?"
+      true_action: RECORDING_ONLY
+      false_action: CONTINUE
+      
+    - check: "Confidence < 0.7?"
+      true_action: VOICE_DISABLED
+      false_action: CONTINUE
+      
+    - check: "Confidence < 0.85?"
+      true_action: VOICE_CRITICAL_ONLY
+      false_action: CONTINUE
+      
+    - check: "Speed > 300 km/h?"
+      true_action: VOICE_DISABLED
+      false_action: CONTINUE
+      
+    - check: "Speed < 30 km/h?"
+      true_action: VOICE_DISABLED
+      false_action: CONTINUE
+
+# =============================================================================
+# SECTION 10: AUDIT AND COMPLIANCE
+# =============================================================================
+
+audit:
   
-  # Corner phase restrictions
-  corner_phases:
-    approach:
-      voice_allowed: true
-      max_messages: 1
-    entry:
-      voice_allowed: true
-      restricted_to: ["critical"]
-    apex:
-      voice_allowed: false
-      exception: "instability_warning"
-    exit:
-      voice_allowed: true
-      restricted_to: ["encouragement", "summary"]
-    straight:
-      voice_allowed: true
-      max_messages: 2
+  # All ODD violations must be logged
+  logging:
+    log_all_degradations: true
+    log_all_refusals: true
+    log_all_condition_changes: true
+    retention_days: 90
+    
+  # Regular compliance checks
+  compliance:
+    check_interval_ms: 1000                 # Check ODD every second
+    startup_check_required: true
+    shutdown_summary_required: true
+    
+  # Statistics
+  statistics:
+    track_time_in_each_mode: true
+    track_degradation_frequency: true
+    track_refusal_reasons: true
 
 # =============================================================================
-# LEARNING CONSTRAINTS
+# END OF ODD SPECIFICATION
 # =============================================================================
-
-learning_constraints:
-  # Adaptive Envelope Refinement (AER) settings
-  aer:
-    minimum_laps_before_learning: 3
-    minimum_clean_laps_for_blend: 5
-    maximum_blend_weight: 0.3  # Physics always dominates
-    
-    # Confidence gating
-    minimum_confidence_for_learning: 0.9
-    disable_learning_below_confidence: 0.7
-    
-    # Decay settings
-    decay_half_life_laps: 20
-    decay_on_condition_change: true
-    
-    # Segment granularity
-    minimum_segment_length_m: 20
-    maximum_segment_length_m: 100
-    
-    # Outlier rejection
-    outlier_percentile_low: 10
-    outlier_percentile_high: 90
-
+#
+# CERTIFICATION STATEMENT:
+# This ODD specification defines the complete operational envelope for the
+# Safety-Critical Adaptive AI Race Coaching System. Operation outside these
+# bounds is prohibited. All conditions are binary - there is no "maybe."
+#
+# When in doubt, the system MUST choose the safer option:
+# - Silence over potentially incorrect advice
+# - Recording over potentially incorrect coaching
+# - Refusal over potentially unsafe operation
+#
 # =============================================================================
-# FAILURE RESPONSE
-# =============================================================================
-
-failure_responses:
-  gps_dropout:
-    action: "degrade_to_imu_only"
-    duration_limit_seconds: 5
-    fallback: "level_2_silent"
-    
-  imu_saturation:
-    action: "flag_data_invalid"
-    recovery: "wait_for_stable_readings"
-    fallback: "level_3_recording"
-    
-  sensor_disagreement:
-    action: "use_lower_estimate"
-    confidence_reduction: 0.3
-    logging: "detailed"
-    
-  voice_engine_failure:
-    action: "continue_silent"
-    post_lap_notification: true
-    
-  runtime_overload:
-    action: "shed_non_critical"
-    priority_order:
-      - "telemetry"  # Highest priority
-      - "physics"
-      - "voice"
-      - "ui"         # Lowest priority - shed first
-
-# =============================================================================
-# PHYSICS DEFAULTS
-# =============================================================================
-
-physics_defaults:
-  # Conservative defaults - actual values from vehicle config
-  tire_friction_coefficient: 1.0  # Dry road tire
-  safety_margin_factor: 0.85      # 15% safety margin
-  reaction_time_seconds: 0.3      # Human reaction time
-  
-  # Braking assumptions (conservative)
-  max_deceleration_g: 1.0
-  braking_efficiency: 0.9
-  
-  # Steering assumptions
-  max_lateral_g: 1.2
-  steering_response_delay_ms: 100
