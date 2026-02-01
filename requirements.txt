@@ -1,0 +1,40 @@
+# Safety-Critical Adaptive AI Race Coaching System
+# Python Dependencies
+
+# Core numerical computation
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0,<2.0.0
+
+# Configuration management
+pyyaml>=6.0,<7.0
+pydantic>=2.0.0,<3.0.0
+
+# Sensor data handling
+pyserial>=3.5,<4.0          # GPS module communication
+# Note: IMU libraries are platform-specific
+
+# Geospatial computation
+pyproj>=3.5.0,<4.0.0        # Coordinate transformations
+shapely>=2.0.0,<3.0.0       # Geometry operations
+
+# Text-to-speech (platform-specific)
+pyttsx3>=2.90,<3.0          # Cross-platform TTS
+
+# Visualization (post-lap analysis only)
+matplotlib>=3.7.0,<4.0.0
+folium>=0.14.0,<1.0.0       # Map overlays
+
+# Testing
+pytest>=7.3.0,<8.0.0
+pytest-cov>=4.0.0,<5.0.0
+hypothesis>=6.75.0,<7.0.0   # Property-based testing
+
+# Type checking
+mypy>=1.3.0,<2.0.0
+
+# Development tools
+black>=23.3.0,<24.0.0
+ruff>=0.0.270,<1.0.0
+
+# Real-time scheduling (optional, for embedded)
+# schedule>=1.2.0,<2.0.0
