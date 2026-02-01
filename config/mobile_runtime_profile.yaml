@@ -1,0 +1,1443 @@
+# =============================================================================
+# MOBILE RUNTIME & OS CONSTRAINT PROFILE
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# SUBORDINATION STATEMENT:
+#   This profile is STRICTLY SUBORDINATE to the MASTER PROMPT.
+#   It may NOT contradict, weaken, or override any Master Prompt rule.
+#   It may ONLY restrict behavior further, never loosen it.
+#   If mobile constraints conflict with system capability:
+#     → The system MUST degrade or fall silent.
+#
+# GOVERNING ASSUMPTIONS:
+#   1. The OS is hostile to long-running background tasks
+#   2. Sensors may be throttled without warning
+#   3. Audio latency may spike unpredictably
+#   4. The app may be paused, killed, or resumed at any time
+#   5. Thermal throttling can occur without notice
+#   6. Battery saver modes can degrade sensor access
+#
+# CORE PRINCIPLE:
+#   Mobile constraints can only make the system MORE conservative.
+#   If safe operation cannot be guaranteed → SILENCE.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "MOBILE_PLATFORM"
+subordinate_to: "MASTER_PROMPT"
+
+platforms:
+  primary: "Android (API 26+)"
+  secondary: "iOS (15.0+)"
+
+# =============================================================================
+# SECTION A: MOBILE APP LIFECYCLE MODEL
+# =============================================================================
+
+lifecycle:
+
+  # ---------------------------------------------------------------------------
+  # A.1 LIFECYCLE STATES
+  # ---------------------------------------------------------------------------
+  states:
+    
+    NOT_RUNNING:
+      description: "App not in memory"
+      coaching_allowed: false
+      sensor_access: false
+      logging: false
+      
+    LAUNCHING:
+      description: "App starting, initializing"
+      coaching_allowed: false
+      sensor_access: "Initializing"
+      logging: "Starting"
+      duration_max_ms: 5000
+      
+    FOREGROUND_ACTIVE:
+      description: "App visible and focused, screen on"
+      coaching_allowed: true
+      sensor_access: "Full"
+      logging: "Full"
+      note: "ONLY state where coaching is permitted"
+      
+    FOREGROUND_PAUSED:
+      description: "App visible but dialog/overlay present"
+      coaching_allowed: false
+      sensor_access: "Reduced"
+      logging: "Continue"
+      action: "Announce 'Standby', suppress coaching"
+      
+    BACKGROUND:
+      description: "App not visible, may be running"
+      coaching_allowed: false
+      sensor_access: "Best-effort logging only"
+      logging: "Best-effort"
+      voice: "Forbidden"
+      
+    SUSPENDED:
+      description: "OS has frozen the process"
+      coaching_allowed: false
+      sensor_access: "None"
+      logging: "None"
+      note: "No code executes"
+      
+    TERMINATING:
+      description: "App being killed by OS or user"
+      coaching_allowed: false
+      action: "Emergency log flush"
+      
+  # ---------------------------------------------------------------------------
+  # A.2 LIFECYCLE TRANSITIONS
+  # ---------------------------------------------------------------------------
+  transitions:
+    
+    # --- APP LAUNCH ---
+    app_launch:
+      
+      from: "NOT_RUNNING"
+      to: "FOREGROUND_ACTIVE"
+      
+      requirements:
+        - "Complete sensor initialization"
+        - "Validate sensor availability"
+        - "Load track geometry (if available)"
+        - "Perform mounting calibration check"
+        
+      coaching_state: "DISABLED until explicit user start"
+      
+      user_action_required:
+        action: "Tap 'Start Session'"
+        rationale: "User confirms ready to drive"
+        
+      timeout:
+        if_not_started_within_ms: 300000  # 5 minutes
+        action: "Return to idle, release sensor locks"
+        
+    # --- FOREGROUND → BACKGROUND ---
+    foreground_to_background:
+      
+      trigger:
+        - "Home button pressed"
+        - "Recent apps invoked"
+        - "Another app takes foreground"
+        - "Incoming call"
+        
+      response:
+        immediate:
+          - "coaching_allowed = FALSE"
+          - "voice_output = STOP immediately"
+          - "Set state = BACKGROUND_PAUSED"
+        deferred:
+          - "Reduce sensor polling (power saving)"
+          - "Continue logging at reduced rate"
+          
+      coaching_impact:
+        action: "STOP all coaching immediately"
+        no_final_message: true
+        rationale: "No voice output when backgrounded"
+        
+      learning_impact:
+        action: "PAUSE learning, do not corrupt"
+        current_lap: "Mark as incomplete"
+        
+    # --- BACKGROUND → FOREGROUND ---
+    background_to_foreground:
+      
+      trigger: "App returns to foreground"
+      
+      response:
+        immediate:
+          - "Resume sensor polling"
+          - "coaching_allowed = FALSE (pending confirmation)"
+          
+      resume_requirements:
+        mandatory:
+          - "User explicit confirmation to resume"
+          - "Sensor health check passes"
+          - "GPS fix reacquired"
+          - "Mounting confidence validated"
+          
+      confirmation_ui:
+        display: "'Resume Session?' with explicit button"
+        auto_resume: "FORBIDDEN"
+        timeout_ms: 30000
+        on_timeout: "End session, return to idle"
+        
+      rationale: |
+        User may have stopped driving.
+        Context is lost. Do not assume continuation.
+        
+    # --- SCREEN LOCK / UNLOCK ---
+    screen_lock:
+      
+      trigger: "Screen turned off or locked"
+      
+      android:
+        behavior: "App moves to background"
+        action: "Same as foreground_to_background"
+        
+      ios:
+        behavior: "May continue briefly, then suspend"
+        action: "Same as foreground_to_background"
+        
+      coaching: "STOP immediately"
+      
+    screen_unlock:
+      
+      trigger: "Screen unlocked"
+      behavior: "App returns to foreground"
+      action: "Same as background_to_foreground (requires confirmation)"
+      
+    # --- APP SUSPENSION ---
+    app_suspension:
+      
+      trigger: "OS suspends process (no CPU time)"
+      
+      detection: "None (process frozen)"
+      
+      on_resume:
+        actions:
+          - "Detect time gap"
+          - "Mark session interrupted"
+          - "Require user confirmation"
+          
+        if_gap_greater_than_ms: 5000
+        action: "Session considered broken, require restart"
+        
+    # --- APP TERMINATION ---
+    app_termination:
+      
+      by_user:
+        trigger: "User swipes away or force stops"
+        action: "Graceful shutdown if possible"
+        log_flush: "Attempt emergency flush"
+        
+      by_os:
+        trigger: "OS kills for memory/resource"
+        detection: "None (instant death)"
+        recovery: "On next launch, detect incomplete session"
+        
+      by_crash:
+        trigger: "Unhandled exception or native crash"
+        detection: "Crash handler if installed"
+        action: "Log crash info, attempt flush"
+        
+    # --- UNEXPECTED PROCESS DEATH ---
+    unexpected_death:
+      
+      detection: "On next launch: incomplete session marker"
+      
+      recovery:
+        session_data: "Mark as incomplete"
+        learning_data: "Do not use incomplete session"
+        user_notification: "Inform user of interrupted session"
+        
+      data_integrity:
+        rule: "Incomplete sessions never influence learning"
+        verification: "Session must have clean close marker"
+        
+  # ---------------------------------------------------------------------------
+  # A.3 AMBIGUOUS STATE HANDLING
+  # ---------------------------------------------------------------------------
+  ambiguous_states:
+    
+    rule: "Any ambiguous lifecycle state → SILENCE"
+    
+    examples:
+      - "Cannot determine if foreground"
+      - "Sensor state unknown after resume"
+      - "Time gap detected but cause unknown"
+      
+    action:
+      coaching: "DISABLED"
+      voice: "SILENT"
+      logging: "Continue (informational)"
+      user_action: "Require explicit restart"
+
+# =============================================================================
+# SECTION B: SENSOR ACCESS & RATE MANAGEMENT
+# =============================================================================
+
+sensor_access:
+
+  # ---------------------------------------------------------------------------
+  # B.1 GPS MANAGEMENT
+  # ---------------------------------------------------------------------------
+  gps:
+    
+    requested_rate:
+      android: "PRIORITY_HIGH_ACCURACY, 1Hz minimum"
+      ios: "kCLLocationAccuracyBest, 1Hz minimum"
+      
+    actual_rate:
+      expectation: "OS may deliver less frequently"
+      monitoring: "Track actual update interval"
+      
+    throttling_detection:
+      method: "Compare requested vs actual rate"
+      
+      thresholds:
+        normal: "Update interval < 1.5 × requested"
+        degraded: "Update interval 1.5-3.0 × requested"
+        starved: "Update interval > 3.0 × requested"
+        lost: "No update for > 5 seconds"
+        
+      response:
+        degraded:
+          - "Reduce position confidence"
+          - "Increase envelope margins"
+          - "Announce 'Standby' if coaching active"
+        starved:
+          - "Disable position-based coaching"
+          - "IMU-only mode (limited)"
+        lost:
+          - "GPS_LOSS failure mode"
+          - "Silence on position-based output"
+          
+    os_smoothing:
+      detection: "Suspiciously smooth position changes"
+      risk: "Artificial precision, false confidence"
+      response: "Cannot fully detect; assume worst case"
+      
+  # ---------------------------------------------------------------------------
+  # B.2 IMU MANAGEMENT
+  # ---------------------------------------------------------------------------
+  imu:
+    
+    requested_rate:
+      android: "SENSOR_DELAY_GAME (20ms) or SENSOR_DELAY_FASTEST"
+      ios: "CMMotionManager.accelerometerUpdateInterval = 0.01"
+      
+    actual_rate:
+      monitoring: "Track actual sample interval"
+      
+    throttling_detection:
+      thresholds:
+        normal: "< 25ms between samples (40Hz+)"
+        degraded: "25-50ms between samples (20-40Hz)"
+        starved: "> 50ms between samples (< 20Hz)"
+        
+      response:
+        degraded:
+          - "Reduce deviation detection sensitivity"
+          - "Increase persistence thresholds"
+        starved:
+          - "Disable high-frequency detection"
+          - "STEERING_TOO_AGGRESSIVE detection disabled"
+          - "ABRUPT_THROTTLE detection disabled"
+          
+    batching:
+      android_specific: "OS may batch sensor events"
+      detection: "Multiple events with same timestamp"
+      response: "Use batch timestamps, not delivery time"
+      
+  # ---------------------------------------------------------------------------
+  # B.3 PERMISSION MANAGEMENT
+  # ---------------------------------------------------------------------------
+  permissions:
+    
+    required:
+      gps: "Location (Fine/Precise)"
+      imu: "Motion/Activity (if separate permission)"
+      
+    revocation_detection:
+      method: "Check permission state periodically"
+      frequency: "Every lifecycle resume + every 10 seconds"
+      
+    mid_session_revocation:
+      detection: "Permission check fails"
+      response:
+        immediate:
+          - "coaching_allowed = FALSE"
+          - "Announce 'Offline'"
+          - "Stop session"
+        user_notification: "Permission required for coaching"
+        no_continuation: true
+        
+  # ---------------------------------------------------------------------------
+  # B.4 SENSOR FIDELITY RULES
+  # ---------------------------------------------------------------------------
+  fidelity_rules:
+    
+    adaptive_learning_requirements:
+      gps_rate_min_hz: 1.0
+      imu_rate_min_hz: 20.0
+      gps_hdop_max: 2.5
+      
+      if_not_met:
+        action: "Disable adaptive learning"
+        use_physics_only: true
+        
+    interpolation_rules:
+      allowed: "Linear interpolation over < 100ms gap"
+      forbidden: "Interpolation over > 100ms gap"
+      forbidden: "Non-linear interpolation (spline, etc.)"
+      forbidden: "Predictive extrapolation as 'real' data"
+      
+      rationale: |
+        Never fake precision. Missing data is missing data.
+        System must acknowledge uncertainty, not hide it.
+        
+    degraded_fidelity_response:
+      principle: "Reduce capability, never fake capability"
+      actions:
+        - "Widen envelope margins"
+        - "Reduce voice frequency"
+        - "Suppress low-confidence callouts"
+        - "Eventually fall silent"
+
+# =============================================================================
+# SECTION C: THERMAL & POWER AWARENESS
+# =============================================================================
+
+thermal_power:
+
+  # ---------------------------------------------------------------------------
+  # C.1 THERMAL MONITORING
+  # ---------------------------------------------------------------------------
+  thermal:
+    
+    detection:
+      
+      android:
+        api: "PowerManager.getCurrentThermalStatus()"
+        levels:
+          THERMAL_STATUS_NONE: "Normal"
+          THERMAL_STATUS_LIGHT: "Warm"
+          THERMAL_STATUS_MODERATE: "Hot"
+          THERMAL_STATUS_SEVERE: "Critical"
+          THERMAL_STATUS_CRITICAL: "Emergency"
+          THERMAL_STATUS_EMERGENCY: "Shutdown imminent"
+          THERMAL_STATUS_SHUTDOWN: "Device shutting down"
+          
+      ios:
+        api: "ProcessInfo.ThermalState"
+        levels:
+          nominal: "Normal"
+          fair: "Warm"
+          serious: "Hot"
+          critical: "Critical"
+          
+    response:
+      
+      NORMAL:
+        sensor_rate: "Full"
+        coaching: "Full"
+        voice: "Full"
+        
+      WARM:
+        sensor_rate: "Full"
+        coaching: "Full"
+        voice: "Full"
+        action: "Log thermal state, monitor trend"
+        
+      HOT:
+        sensor_rate: "Reduce IMU to 50Hz if higher"
+        coaching: "Reduce voice frequency (2× cooldown)"
+        voice: "Reduce to essential only"
+        ui: "Reduce refresh rate to 15 FPS"
+        warning: "None (mid-lap)"
+        
+      CRITICAL:
+        sensor_rate: "Minimum viable (GPS 1Hz, IMU 25Hz)"
+        coaching: "HIGH and CRITICAL priority only"
+        voice: "Minimal"
+        action: "Prepare for thermal emergency"
+        
+      EMERGENCY:
+        coaching: "DISABLED"
+        voice: "Announce 'Standby' once"
+        action: "Preserve logs, enter minimal mode"
+        rationale: "Device may shut down; preserve data"
+        
+  # ---------------------------------------------------------------------------
+  # C.2 CPU/GPU THROTTLING
+  # ---------------------------------------------------------------------------
+  cpu_throttling:
+    
+    detection:
+      method: "Monitor main loop cycle time"
+      baseline: "Establish normal cycle time at session start"
+      
+      thresholds:
+        normal: "cycle_time < 1.2 × baseline"
+        throttled: "cycle_time 1.2-2.0 × baseline"
+        severe: "cycle_time > 2.0 × baseline"
+        
+    response:
+      throttled:
+        - "Reduce non-essential computation"
+        - "Skip UI updates if needed"
+        - "Maintain sensor processing priority"
+        
+      severe:
+        - "Enter RUNTIME_OVERLOAD response"
+        - "Shed all non-safety-critical work"
+        - "May need to suspend coaching"
+        
+  # ---------------------------------------------------------------------------
+  # C.3 BATTERY & POWER MODES
+  # ---------------------------------------------------------------------------
+  battery:
+    
+    monitoring:
+      level: "Battery percentage"
+      charging: "Charging state"
+      
+    low_battery:
+      threshold: 20%
+      response:
+        - "Log warning"
+        - "No immediate coaching change"
+        - "Prepare for potential shutdown"
+        
+    critical_battery:
+      threshold: 10%
+      response:
+        - "Announce 'Battery low' (once, post-lap)"
+        - "Reduce voice frequency"
+        - "Increase log flush frequency"
+        
+    power_saver_mode:
+      
+      android: "PowerManager.isPowerSaveMode()"
+      ios: "ProcessInfo.isLowPowerModeEnabled"
+      
+      detection: "Check on resume and periodically"
+      
+      impact:
+        sensor_rates: "May be reduced by OS"
+        cpu_speed: "May be reduced"
+        background: "More aggressively killed"
+        
+      response:
+        - "Assume sensors are degraded"
+        - "Increase envelope conservatism"
+        - "Recommend user disable power saver"
+        - "If sensor quality too low: disable coaching"
+        
+  # ---------------------------------------------------------------------------
+  # C.4 PROLONGED SESSION HANDLING
+  # ---------------------------------------------------------------------------
+  prolonged_session:
+    
+    heat_buildup:
+      expectation: "Device heats up over 30+ minute sessions"
+      monitoring: "Track thermal state trend"
+      
+    progressive_degradation:
+      at_15_min: "Check thermal, log status"
+      at_30_min: "Likely warm; reduce non-essential"
+      at_45_min: "Likely hot; apply HOT responses"
+      at_60_min: "Risk of critical; recommend break"
+      
+    recommendation:
+      not_mid_lap: "Never interrupt driving"
+      post_lap: "If HOT for >10 min, suggest 'Consider a break'"
+      
+  # ---------------------------------------------------------------------------
+  # C.5 FALL SILENT THRESHOLD
+  # ---------------------------------------------------------------------------
+  fall_silent:
+    
+    conditions:
+      any_of:
+        - "Thermal state = EMERGENCY"
+        - "CPU throttling = SEVERE for > 30 seconds"
+        - "Sensor rates below minimum for > 10 seconds"
+        - "Battery < 5%"
+        
+    action:
+      - "coaching_allowed = FALSE"
+      - "Announce 'Standby' once"
+      - "Continue logging only"
+      - "Preserve data for analysis"
+      
+    rationale: |
+      If thermal/power constraints prevent safe operation,
+      silence is the only safe response.
+
+# =============================================================================
+# SECTION D: AUDIO PIPELINE SAFETY
+# =============================================================================
+
+audio_pipeline:
+
+  # ---------------------------------------------------------------------------
+  # D.1 LATENCY MANAGEMENT
+  # ---------------------------------------------------------------------------
+  latency:
+    
+    target_ms: 50
+    acceptable_ms: 100
+    maximum_ms: 200
+    
+    measurement:
+      method: "Timestamp at queue → timestamp at playback start"
+      note: "Approximate; exact measurement difficult"
+      
+    detection:
+      if_latency_exceeds_maximum:
+        action: "Suppress this message"
+        rationale: "Late audio is worse than silence"
+        
+    spike_handling:
+      detection: "Latency > 2× recent average"
+      response:
+        - "Log spike event"
+        - "Do not retry (message stale)"
+        - "Continue with next message"
+        
+  # ---------------------------------------------------------------------------
+  # D.2 AUDIO FOCUS
+  # ---------------------------------------------------------------------------
+  audio_focus:
+    
+    android:
+      request: "AudioManager.requestAudioFocus()"
+      type: "AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK"
+      
+    ios:
+      category: "AVAudioSession.Category.playback"
+      mode: "duckOthers or mixWithOthers"
+      
+    focus_loss:
+      
+      transient:
+        trigger: "Notification, other app briefly"
+        response: "Pause output, resume when focus regained"
+        max_pause_ms: 2000
+        if_exceeds: "Drop pending messages"
+        
+      permanent:
+        trigger: "Phone call, other app takes focus"
+        response:
+          - "Stop all audio output"
+          - "Do not queue new messages"
+          - "Coaching continues (silent mode)"
+          
+      on_regain:
+        response: "Resume output capability"
+        do_not: "Replay missed messages (they're stale)"
+        
+  # ---------------------------------------------------------------------------
+  # D.3 BLUETOOTH HANDLING
+  # ---------------------------------------------------------------------------
+  bluetooth:
+    
+    helmet_scenario:
+      description: "Bluetooth connection to helmet headset"
+      
+    latency_expectation:
+      range_ms: "50-300"
+      highly_variable: true
+      
+    handling:
+      strategy: "Account for BT latency in callout timing"
+      adjustment: "Add estimated BT latency to lead time"
+      
+    connection_issues:
+      
+      disconnect:
+        detection: "Audio route changes"
+        response:
+          - "Fall back to speaker (if allowed by user setting)"
+          - "Or silence (if BT-only configured)"
+        mid_phrase: "May produce audio artifact; acceptable"
+        
+      reconnect:
+        detection: "BT device reappears"
+        response: "Resume BT output"
+        validation: "Test phrase not required"
+        
+    a2dp_vs_hfp:
+      a2dp: "High quality, higher latency"
+      hfp: "Lower quality, lower latency"
+      recommendation: "HFP for coaching (latency matters more)"
+      
+  # ---------------------------------------------------------------------------
+  # D.4 INTERRUPTION HANDLING
+  # ---------------------------------------------------------------------------
+  interruptions:
+    
+    phone_call:
+      detection: "Audio focus loss + telephony state"
+      response:
+        - "Immediately stop audio output"
+        - "Continue coaching logic (silent)"
+        - "Resume audio when call ends"
+        
+    notification:
+      detection: "Brief audio focus loss"
+      response:
+        - "Duck or pause briefly"
+        - "Resume when focus regained"
+        
+    other_app:
+      detection: "Sustained audio focus loss"
+      response:
+        - "Stop audio output"
+        - "Continue coaching (silent)"
+        
+  # ---------------------------------------------------------------------------
+  # D.5 CANCELLATION CAPABILITY
+  # ---------------------------------------------------------------------------
+  cancellation:
+    
+    requirement: "Voice output must be cancellable mid-speech"
+    
+    use_cases:
+      - "Higher priority message arrives"
+      - "Context changes (message no longer relevant)"
+      - "App backgrounded"
+      - "Audio focus lost"
+      
+    implementation:
+      method: "Stop playback immediately"
+      latency: "< 50ms from cancel request"
+      
+    partial_phrase:
+      acceptable: true
+      example: "'Bra—' (interrupted)"
+      rationale: "Better than completing stale message"
+      
+  # ---------------------------------------------------------------------------
+  # D.6 NON-BLOCKING GUARANTEE
+  # ---------------------------------------------------------------------------
+  non_blocking:
+    
+    requirement: "Voice must NEVER block computation threads"
+    
+    implementation:
+      queue: "Lock-free, bounded"
+      handoff: "Fire-and-forget"
+      failure: "Drop message, do not retry"
+      
+    audio_thread_issues:
+      if_audio_thread_hangs:
+        detection: "Watchdog on audio thread"
+        response: "Kill audio thread, disable voice"
+        computation_impact: "NONE"
+
+# =============================================================================
+# SECTION E: UI CONSTRAINTS (MOBILE HUD)
+# =============================================================================
+
+ui_constraints:
+
+  # ---------------------------------------------------------------------------
+  # E.1 CORE PRINCIPLE
+  # ---------------------------------------------------------------------------
+  principle:
+    
+    statement: |
+      UI is INFORMATIONAL ONLY.
+      Driver should NOT be looking at phone while driving.
+      UI must never distract, block, or require interaction.
+      
+  # ---------------------------------------------------------------------------
+  # E.2 DURING LAP (MOTION DETECTED)
+  # ---------------------------------------------------------------------------
+  during_lap:
+    
+    allowed:
+      
+      - element: "Current speed"
+        format: "Large, high-contrast number"
+        update_rate: "1 Hz maximum"
+        
+      - element: "Lap timer"
+        format: "MM:SS.s"
+        update_rate: "1 Hz"
+        
+      - element: "System status indicator"
+        format: "Color/icon (green/yellow/red)"
+        meaning:
+          green: "Ready, full capability"
+          yellow: "Standby, reduced capability"
+          red: "Offline, no coaching"
+          
+      - element: "Sector time delta"
+        format: "+/- seconds, color coded"
+        display: "At sector boundaries only"
+        
+    display_rules:
+      brightness: "Maximum or auto-bright"
+      orientation: "Locked (landscape or portrait, user choice)"
+      screen_timeout: "Disabled during session"
+      
+    forbidden:
+      
+      - element: "Any interactive button"
+        reason: "Cannot safely tap while driving"
+        
+      - element: "Scrolling content"
+        reason: "Requires focus"
+        
+      - element: "Text messages or notifications"
+        reason: "Distracting"
+        
+      - element: "Settings or configuration"
+        reason: "Not during motion"
+        
+      - element: "Complex visualizations"
+        reason: "Requires study"
+        
+      - element: "Any pop-up or modal"
+        reason: "Obscures view, requires dismissal"
+        
+  # ---------------------------------------------------------------------------
+  # E.3 POST LAP (STATIONARY)
+  # ---------------------------------------------------------------------------
+  post_lap:
+    
+    detection:
+      condition: "Speed < 5 km/h for > 10 seconds"
+      location: "In pit lane or designated area"
+      
+    allowed:
+      
+      - element: "Lap time summary"
+      - element: "Sector times"
+      - element: "Best lap comparison"
+      - element: "Session statistics"
+      - element: "Settings access"
+      - element: "End session button"
+      
+    still_forbidden:
+      - element: "Complex data entry"
+      - element: "Distracting animations"
+      - element: "Non-essential notifications"
+      
+  # ---------------------------------------------------------------------------
+  # E.4 TOUCH INPUT HANDLING
+  # ---------------------------------------------------------------------------
+  touch_input:
+    
+    during_motion:
+      
+      locked: true
+      
+      exceptions:
+        - "Emergency stop button (large, edge of screen)"
+        
+      rationale: |
+        Accidental touch must not change system state.
+        Driver must not be tempted to interact.
+        
+    motion_detection:
+      method: "Speed > 10 km/h"
+      source: "GPS"
+      
+    stationary_interaction:
+      unlock_delay_ms: 2000
+      message: "Touch to unlock" (if applicable)
+      
+  # ---------------------------------------------------------------------------
+  # E.5 UI THREAD ISOLATION
+  # ---------------------------------------------------------------------------
+  ui_thread:
+    
+    isolation:
+      - "UI rendering on separate thread"
+      - "UI crash does not affect MAIN"
+      - "UI freeze does not block computation"
+      - "UI updates are best-effort"
+      
+    data_access:
+      method: "Read-only snapshot"
+      frequency: "10 Hz maximum"
+      blocking: "NEVER"
+      
+    frame_drops:
+      acceptable: true
+      target_fps: 30
+      minimum_fps: 10
+      if_below_minimum: "Reduce UI complexity"
+      
+  # ---------------------------------------------------------------------------
+  # E.6 ENTIRELY FORBIDDEN UI ELEMENTS
+  # ---------------------------------------------------------------------------
+  forbidden_always:
+    
+    - "Advertisements"
+    - "Social media integration"
+    - "Chat or messaging"
+    - "Camera viewfinder"
+    - "Games or entertainment"
+    - "Video playback"
+    - "Web browser"
+    - "Animated backgrounds"
+    - "Auto-playing media"
+
+# =============================================================================
+# SECTION F: MOUNTING & ORIENTATION VALIDATION
+# =============================================================================
+
+mounting:
+
+  # ---------------------------------------------------------------------------
+  # F.1 CALIBRATION REQUIREMENT
+  # ---------------------------------------------------------------------------
+  calibration:
+    
+    when_required:
+      - "First use"
+      - "Session start"
+      - "After device remount"
+      - "After significant orientation change detected"
+      
+    process:
+      step_1: "User mounts device in final position"
+      step_2: "User confirms mount is secure"
+      step_3: "System samples IMU for 3 seconds while stationary"
+      step_4: "System determines gravity vector (which axis is 'down')"
+      step_5: "System confirms calibration success"
+      
+    duration: "< 5 seconds"
+    
+    failure:
+      if_not_stationary: "Retry calibration"
+      if_unstable_readings: "Warn user, retry"
+      
+  # ---------------------------------------------------------------------------
+  # F.2 ORIENTATION HANDLING
+  # ---------------------------------------------------------------------------
+  orientation:
+    
+    supported:
+      - "Landscape left"
+      - "Landscape right"
+      - "Portrait" (if explicitly enabled)
+      
+    auto_rotation:
+      during_session: "LOCKED to calibrated orientation"
+      rationale: "Rotation during driving would reset IMU reference"
+      
+    orientation_change_detection:
+      method: "Gravity vector shift > 20°"
+      
+      response:
+        if_during_session:
+          - "Flag mounting_confidence = LOW"
+          - "Suppress IMU-based detection"
+          - "Continue GPS-only"
+          - "Do NOT warn mid-lap"
+          - "Warn post-lap: 'Check device mount'"
+          
+  # ---------------------------------------------------------------------------
+  # F.3 VIBRATION MONITORING
+  # ---------------------------------------------------------------------------
+  vibration:
+    
+    detection:
+      method: "High-frequency IMU noise analysis"
+      baseline: "Established during calibration"
+      
+    thresholds:
+      normal: "Noise < 2 × baseline"
+      elevated: "Noise 2-5 × baseline"
+      excessive: "Noise > 5 × baseline"
+      
+    response:
+      elevated:
+        - "Increase IMU filter bandwidth"
+        - "Reduce IMU-based detection sensitivity"
+        
+      excessive:
+        - "Flag mounting_confidence = LOW"
+        - "Disable IMU-based steering detection"
+        - "Log for post-session analysis"
+        - "Do NOT warn mid-lap"
+        
+  # ---------------------------------------------------------------------------
+  # F.4 LOOSE MOUNT DETECTION
+  # ---------------------------------------------------------------------------
+  loose_mount:
+    
+    detection:
+      indicators:
+        - "Sudden orientation shifts"
+        - "Oscillating gravity vector"
+        - "Vibration pattern inconsistent with track"
+        
+    response:
+      - "Set mounting_confidence = LOW"
+      - "Disable IMU-based coaching"
+      - "Continue GPS-only"
+      - "Post-lap warning: 'Mounting may be loose'"
+      
+    never_warn_mid_lap:
+      rationale: |
+        Mid-lap warning about mount is:
+        1. Distracting
+        2. Not actionable
+        3. Potentially dangerous if driver tries to fix
+        
+  # ---------------------------------------------------------------------------
+  # F.5 MOUNTING CONFIDENCE SCORE
+  # ---------------------------------------------------------------------------
+  mounting_confidence:
+    
+    range: "0.0 to 1.0"
+    
+    factors:
+      - "Calibration quality"
+      - "Orientation stability"
+      - "Vibration level"
+      - "Time since calibration"
+      
+    thresholds:
+      high: ">= 0.80 (full IMU capability)"
+      medium: "0.60 - 0.80 (reduced IMU sensitivity)"
+      low: "< 0.60 (GPS-only mode)"
+      
+    impact:
+      low_confidence:
+        - "Disable STEERING_TOO_AGGRESSIVE detection"
+        - "Disable ABRUPT_THROTTLE detection"
+        - "Reduce combined grip monitoring"
+        - "Rely on GPS-derived metrics only"
+        
+  # ---------------------------------------------------------------------------
+  # F.6 POST-SESSION REPORTING
+  # ---------------------------------------------------------------------------
+  post_session:
+    
+    if_mounting_issues_detected:
+      display: "Mounting quality: Poor"
+      recommendation: "Secure device more firmly"
+      detail: "Show when issues occurred"
+      
+    if_orientation_changed:
+      display: "Device orientation changed during session"
+      recommendation: "Lock device in mount before starting"
+
+# =============================================================================
+# SECTION G: DATA PERSISTENCE & RECOVERY
+# =============================================================================
+
+data_persistence:
+
+  # ---------------------------------------------------------------------------
+  # G.1 STORAGE ARCHITECTURE
+  # ---------------------------------------------------------------------------
+  storage:
+    
+    location: "App-private internal storage"
+    
+    structure:
+      sessions/: "Per-session telemetry logs"
+      tracks/: "Track geometry and learning data"
+      config/: "User configuration"
+      crash/: "Crash reports and incomplete sessions"
+      
+    format:
+      logs: "Binary with schema (efficient)"
+      geometry: "Binary or JSON (portable)"
+      config: "JSON (human-readable)"
+      
+  # ---------------------------------------------------------------------------
+  # G.2 WRITE SAFETY
+  # ---------------------------------------------------------------------------
+  write_safety:
+    
+    crash_safe_writes:
+      method: "Write-ahead logging or atomic rename"
+      
+      process:
+        1: "Write to temporary file"
+        2: "Sync to storage (fsync)"
+        3: "Atomic rename to final path"
+        
+      benefit: "Crash during write leaves old file intact"
+      
+    buffered_logging:
+      buffer_size_bytes: 65536
+      flush_interval_ms: 1000
+      
+    forced_flush:
+      triggers:
+        - "Session end"
+        - "App backgrounding"
+        - "Low battery warning"
+        - "Thermal warning"
+        - "Before any risky operation"
+        
+  # ---------------------------------------------------------------------------
+  # G.3 SESSION LIFECYCLE
+  # ---------------------------------------------------------------------------
+  session_lifecycle:
+    
+    session_start:
+      action: "Create session marker file"
+      content: "session_id, start_time, status=ACTIVE"
+      
+    session_active:
+      action: "Append logs to session file"
+      checkpoints: "Write checkpoint every 60 seconds"
+      
+    session_end:
+      action: "Update session marker to status=COMPLETE"
+      verification: "Verify log integrity"
+      
+    session_marker:
+      purpose: "Detect incomplete sessions on next launch"
+      
+  # ---------------------------------------------------------------------------
+  # G.4 INCOMPLETE SESSION HANDLING
+  # ---------------------------------------------------------------------------
+  incomplete_sessions:
+    
+    detection:
+      on_launch: "Check for ACTIVE session markers"
+      
+    classification:
+      cleanly_closed: "status=COMPLETE, all checksums valid"
+      incomplete: "status=ACTIVE (crash/kill during session)"
+      corrupted: "Checksum mismatch or invalid structure"
+      
+    handling:
+      incomplete:
+        log_data: "Preserve for analysis"
+        learning_impact: "DO NOT use for learning"
+        user_notification: "Inform of incomplete session"
+        
+      corrupted:
+        log_data: "Preserve but quarantine"
+        learning_impact: "DO NOT use for learning"
+        user_notification: "Inform of data issue"
+        
+  # ---------------------------------------------------------------------------
+  # G.5 LEARNING DATA INTEGRITY
+  # ---------------------------------------------------------------------------
+  learning_integrity:
+    
+    requirement: |
+      Learning updates ONLY from verified complete sessions.
+      Incomplete or corrupted data must never influence learning.
+      
+    verification:
+      session_closure: "Clean COMPLETE status"
+      data_integrity: "Checksums valid"
+      lap_closure: "Laps have start and finish markers"
+      
+    atomic_updates:
+      process:
+        1: "Validate new learning data"
+        2: "Write new learning file (temp)"
+        3: "Verify written data"
+        4: "Atomic rename (old → backup, temp → current)"
+        5: "Delete backup after success"
+        
+  # ---------------------------------------------------------------------------
+  # G.6 CORRUPTION DETECTION
+  # ---------------------------------------------------------------------------
+  corruption_detection:
+    
+    methods:
+      checksums: "Per-file and per-block"
+      magic_numbers: "File type verification"
+      schema_validation: "Structure verification"
+      range_checks: "Values within expected bounds"
+      
+    on_corruption:
+      action: "Quarantine affected file"
+      fallback: "Use backup or factory defaults"
+      logging: "Record corruption event"
+      
+    recovery:
+      geometry: "Relearn track from scratch"
+      learning: "Start with physics-only envelopes"
+      config: "Reset to defaults"
+      
+  # ---------------------------------------------------------------------------
+  # G.7 STORAGE PRESSURE
+  # ---------------------------------------------------------------------------
+  storage_pressure:
+    
+    monitoring:
+      check: "Available storage space"
+      threshold_low: "100 MB"
+      threshold_critical: "50 MB"
+      
+    response:
+      low:
+        - "Delete old session logs (oldest first)"
+        - "Compress uncompressed logs"
+        - "Warn user"
+        
+      critical:
+        - "Delete more aggressively"
+        - "Reduce logging verbosity"
+        - "Refuse to start new session if insufficient"
+
+# =============================================================================
+# SECTION H: MOBILE-SPECIFIC FAILURE MODES
+# =============================================================================
+
+mobile_failures:
+
+  # ---------------------------------------------------------------------------
+  # H.1 BACKGROUND TASK TERMINATION
+  # ---------------------------------------------------------------------------
+  background_kill:
+    
+    description: "OS kills app while in background"
+    
+    detection: "None (instant death)"
+    
+    on_next_launch:
+      detection: "Incomplete session marker"
+      response:
+        - "Mark session as incomplete"
+        - "Do not use for learning"
+        - "Inform user"
+        
+    prevention:
+      android:
+        - "Foreground service with notification"
+        - "But still no guarantee"
+      ios:
+        - "Background location updates (limited)"
+        - "But still no guarantee"
+        
+    coaching_rule: |
+      Coaching is ONLY allowed in foreground.
+      Background operation is logging-only, best-effort.
+      
+  # ---------------------------------------------------------------------------
+  # H.2 PERMISSION REVOCATION MID-SESSION
+  # ---------------------------------------------------------------------------
+  permission_revocation:
+    
+    description: "User revokes permission while session active"
+    
+    detection:
+      method: "Check permissions on each sensor access"
+      fallback: "Periodic permission check every 10 seconds"
+      
+    response:
+      immediate:
+        - "coaching_allowed = FALSE"
+        - "Announce 'Offline'"
+        - "Stop session"
+      voice: "One announcement only"
+      
+    recovery:
+      on_permission_grant: "User must restart session"
+      auto_resume: "FORBIDDEN"
+      
+    prevention:
+      rationale: |
+        Cannot coach without sensors.
+        No partial capability—missing sensor = offline.
+        
+  # ---------------------------------------------------------------------------
+  # H.3 THERMAL EMERGENCY
+  # ---------------------------------------------------------------------------
+  thermal_emergency:
+    
+    description: "Device thermal state reaches EMERGENCY/SHUTDOWN"
+    
+    detection:
+      android: "THERMAL_STATUS_EMERGENCY or THERMAL_STATUS_SHUTDOWN"
+      ios: "ProcessInfo.ThermalState.critical"
+      
+    response:
+      immediate:
+        - "coaching_allowed = FALSE"
+        - "Announce 'Standby' once"
+        - "Stop all non-essential processing"
+        - "Emergency log flush"
+        - "Reduce sensor polling to minimum"
+        
+    rationale: |
+      Device may shut down imminently.
+      Priority is preserving data, not coaching.
+      
+    recovery:
+      trigger: "Thermal state returns to normal"
+      requirement: "User must acknowledge and restart"
+      
+  # ---------------------------------------------------------------------------
+  # H.4 AUDIO SUBSYSTEM FAILURE
+  # ---------------------------------------------------------------------------
+  audio_failure:
+    
+    description: "Audio output system fails"
+    
+    variants:
+      
+      audio_device_unavailable:
+        detection: "Audio initialization fails"
+        response:
+          - "voice_available = FALSE"
+          - "Continue coaching (silent)"
+          - "UI shows voice status"
+          
+      audio_playback_error:
+        detection: "Repeated playback failures"
+        threshold: "3 consecutive failures"
+        response:
+          - "Disable voice output"
+          - "Log error details"
+          - "Continue coaching (silent)"
+          
+      audio_thread_crash:
+        detection: "Audio thread watchdog timeout"
+        response:
+          - "Kill audio thread"
+          - "Attempt restart"
+          - "If restart fails: disable voice"
+          - "Computation continues regardless"
+          
+    computation_impact:
+      statement: "NONE"
+      rationale: "Voice is optional; computation is not"
+      
+  # ---------------------------------------------------------------------------
+  # H.5 UI THREAD CRASH
+  # ---------------------------------------------------------------------------
+  ui_crash:
+    
+    description: "UI rendering thread crashes"
+    
+    detection: "UI thread watchdog timeout or exception handler"
+    
+    response:
+      immediate:
+        - "Attempt UI thread restart"
+        - "Continue coaching regardless"
+        - "Continue logging"
+        
+    computation_impact:
+      statement: "NONE"
+      rationale: "UI is informational; computation continues"
+      
+    user_experience:
+      if_restart_succeeds: "UI resumes, no data lost"
+      if_restart_fails: "Black screen, but coaching continues"
+      
+  # ---------------------------------------------------------------------------
+  # H.6 SENSOR SUBSYSTEM FAILURE
+  # ---------------------------------------------------------------------------
+  sensor_failure:
+    
+    description: "Sensor API returns errors or no data"
+    
+    variants:
+      
+      gps_subsystem_failure:
+        detection: "LocationManager/CLLocationManager errors"
+        response:
+          - "Enter GPS_LOSS failure mode"
+          - "Suppress position-based coaching"
+          
+      imu_subsystem_failure:
+        detection: "SensorManager errors"
+        response:
+          - "Enter IMU_LOSS failure mode"
+          - "GPS-only mode"
+          
+      complete_sensor_failure:
+        detection: "Both GPS and IMU unavailable"
+        response:
+          - "coaching_allowed = FALSE"
+          - "Announce 'Offline'"
+          - "Log-only mode"
+          
+  # ---------------------------------------------------------------------------
+  # H.7 DEFAULT SAFE STATE
+  # ---------------------------------------------------------------------------
+  default_safe_state:
+    
+    rule: "Mobile failure must never escalate risk"
+    
+    principle: |
+      For ANY mobile-specific failure not explicitly listed:
+      → SILENCE is the default safe state.
+      → Continue computation if possible.
+      → Log the failure.
+      → Do not attempt to coach through uncertainty.
+      
+    fallback_chain:
+      1: "Reduce capability to match available resources"
+      2: "If insufficient: disable coaching"
+      3: "If critical: preserve logs and shut down gracefully"
+      4: "Never: continue with false confidence"
+
+# =============================================================================
+# SECTION I: FINAL CONSTRAINT
+# =============================================================================
+
+final_constraint:
+
+  # ---------------------------------------------------------------------------
+  # I.1 SUBORDINATION STATEMENT
+  # ---------------------------------------------------------------------------
+  subordination:
+    
+    this_profile:
+      - "MUST only restrict system behavior"
+      - "MUST never expand system capability"
+      - "MUST never override Master Prompt invariants"
+      
+    if_conflict:
+      statement: |
+        If mobile constraints prevent safe operation:
+        → The system must refuse or fall silent.
+        
+    examples:
+      - "If sensor rate too low → coaching disabled (not relaxed)"
+      - "If thermal too high → coaching disabled (not continued)"
+      - "If uncertain state → silence (not best-guess)"
+      
+  # ---------------------------------------------------------------------------
+  # I.2 CAPABILITY LIMITS
+  # ---------------------------------------------------------------------------
+  capability_limits:
+    
+    mobile_cannot_add:
+      - "New types of advice"
+      - "Relaxed safety margins"
+      - "More aggressive envelopes"
+      - "Higher confidence than sensors warrant"
+      
+    mobile_can_only:
+      - "Restrict when coaching is allowed"
+      - "Increase conservatism"
+      - "Add silence conditions"
+      - "Add degradation triggers"
+      
+  # ---------------------------------------------------------------------------
+  # I.3 MASTER PROMPT INVARIANTS
+  # ---------------------------------------------------------------------------
+  master_invariants:
+    
+    preserved:
+      - "S1: If confidence < threshold → suppress"
+      - "S2: Never exceed physics limits"
+      - "S3: Never exceed learned envelope × 0.85"
+      - "S4: Silence on sensor failure"
+      - "S5: Log everything, fail silently"
+      - "S6: Learning tightens fast, loosens slow"
+      
+    mobile_adds:
+      - "Additional silence conditions (lifecycle, thermal, power)"
+      - "Additional degradation triggers (mobile-specific)"
+      - "More conservative sensor requirements"
+      - "Stricter UI constraints"
+      
+    mobile_never_overrides:
+      - "Any Master Prompt safety invariant"
+      - "Any confidence threshold (can only raise, not lower)"
+      - "Any margin (can only increase, not decrease)"
+
+# =============================================================================
+# END OF MOBILE RUNTIME & OS CONSTRAINT PROFILE
+# =============================================================================
