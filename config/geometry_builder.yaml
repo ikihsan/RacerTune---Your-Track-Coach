@@ -1,0 +1,1344 @@
+# =============================================================================
+# GEOMETRY BUILDER - RAW DATA TO USABLE TRACK GEOMETRY
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: This module transforms raw fused sensor data into
+# deterministic, auditable track geometry. Every calculation must produce
+# identical results given identical inputs. Every decision must be traceable.
+#
+# DETERMINISM REQUIREMENT: No randomness. No floating-point order dependence.
+# Same input → Same output. Always.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "GEOMETRY_PROCESSING"
+
+# =============================================================================
+# SECTION 1: INPUT SPECIFICATION
+# =============================================================================
+
+input_specification:
+
+  description: |
+    The geometry builder accepts fused sensor data from the track creation
+    pipeline. This data has already been filtered, aligned, and quality-scored.
+    
+  input_format:
+    type: "FusedTrackData"
+    
+    required_fields:
+      points:
+        type: "Array<FusedPoint>"
+        minimum_count: 400                # At least 400m of track at 1m resolution
+        
+      metadata:
+        creation_method: "1 | 2 | 3"
+        num_source_laps: "Integer"
+        reference_map_used: "Boolean"
+        
+    per_point_fields:
+      # Position (required)
+      latitude_deg: "Float64, WGS84"
+      longitude_deg: "Float64, WGS84"
+      
+      # Derived position (computed on load)
+      x_m: "Float64, local East"
+      y_m: "Float64, local North"
+      
+      # Distance (required)
+      distance_m: "Float64, cumulative from start"
+      
+      # Quality (required)
+      confidence: "Float32, [0, 1]"
+      hdop_mean: "Float32, average HDOP at this point"
+      sample_count: "Integer, laps contributing"
+      
+      # Optional (from Method 3 fusion)
+      heading_deg: "Float32, [0, 360)"
+      speed_mps: "Float32, average speed"
+      curvature_raw: "Float32, from IMU if available"
+      
+  validation_on_load:
+    - check: "All required fields present"
+    - check: "Point count >= minimum"
+    - check: "Distance monotonically increasing"
+    - check: "Coordinates within valid ranges"
+    - check: "No NaN or Inf values"
+
+# =============================================================================
+# SECTION 2: COORDINATE SYSTEM
+# =============================================================================
+
+coordinate_system:
+
+  description: |
+    All geometry calculations use a local Cartesian coordinate system.
+    WGS84 coordinates are converted to local East-North-Up (ENU) frame.
+    
+  reference_frame:
+    type: "Local Tangent Plane (ENU)"
+    origin: "Centroid of track points"
+    x_axis: "East positive"
+    y_axis: "North positive"
+    z_axis: "Up positive (ignored for 2D geometry)"
+    
+  conversion:
+    method: "Equirectangular projection"
+    
+    formulas:
+      x_m: "(longitude - origin_lon) × cos(origin_lat) × meters_per_degree"
+      y_m: "(latitude - origin_lat) × meters_per_degree"
+      
+    constants:
+      meters_per_degree: 111319.9         # At equator, adjusted by cos(lat)
+      
+    accuracy:
+      valid_for: "Tracks up to 30km"
+      error_at_10km: "<1m"
+      
+  origin_computation:
+    method: "Centroid of all input points"
+    
+    formula:
+      origin_lat: "mean(all latitudes)"
+      origin_lon: "mean(all longitudes)"
+      
+    storage: "Stored in geometry metadata for reverse conversion"
+
+# =============================================================================
+# SECTION 3: DISTANCE INDEXING
+# =============================================================================
+
+distance_indexing:
+
+  description: |
+    Every point on the track is referenced by its distance from the start/finish
+    line. This provides a canonical, unambiguous position reference.
+    
+  # ---------------------------------------------------------------------------
+  # 3.1 DISTANCE COMPUTATION
+  # ---------------------------------------------------------------------------
+  computation:
+    
+    method: "Cumulative arc length"
+    
+    algorithm:
+      - step: "Start at first point, distance = 0"
+      - step: "For each subsequent point i"
+      - step: "  d_i = d_{i-1} + euclidean_distance(point_{i-1}, point_i)"
+      - step: "Store cumulative distance at each point"
+      
+    precision:
+      storage: "Float64"
+      resolution_m: 0.001                 # Millimeter precision stored
+      display_resolution_m: 0.1           # Decimeter for display
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 DISTANCE INDEX STRUCTURE
+  # ---------------------------------------------------------------------------
+  index_structure:
+    
+    type: "Uniform distance array with spatial index"
+    
+    primary_array:
+      description: "Points at uniform distance intervals"
+      interval_m: 1.0
+      fields_per_entry:
+        - distance_m
+        - x_m
+        - y_m
+        - heading_rad
+        - curvature
+        - confidence
+        - segment_id
+        
+    spatial_index:
+      type: "R-tree"
+      purpose: "Fast nearest-point queries from GPS position"
+      leaf_size: 10
+      
+    lookup_functions:
+      
+      get_by_distance:
+        input: "distance_m"
+        output: "GeometryPoint"
+        method: "Direct array index: idx = floor(distance_m / interval)"
+        interpolation: "Linear between adjacent points"
+        complexity: "O(1)"
+        
+      get_by_position:
+        input: "(x_m, y_m)"
+        output: "(GeometryPoint, distance_m, lateral_offset_m)"
+        method: "R-tree query for nearest point, then refine"
+        complexity: "O(log n)"
+        
+      get_range:
+        input: "(start_distance_m, end_distance_m)"
+        output: "Array<GeometryPoint>"
+        method: "Slice primary array"
+        complexity: "O(k) where k = points in range"
+        
+  # ---------------------------------------------------------------------------
+  # 3.3 WRAPAROUND HANDLING
+  # ---------------------------------------------------------------------------
+  wraparound:
+    
+    description: |
+      Track is circular. Distance wraps from track_length back to 0.
+      All distance operations must handle wraparound correctly.
+      
+    track_length:
+      storage: "Float64, total track length in meters"
+      computation: "Final point distance + closure distance"
+      
+    normalization:
+      function: "normalize_distance(d)"
+      formula: "d mod track_length"
+      handling_negative: "(d mod track_length + track_length) mod track_length"
+      
+    distance_between:
+      function: "distance_between(d1, d2)"
+      forward: "normalize(d2 - d1)"
+      backward: "track_length - forward"
+      shortest: "min(forward, backward)"
+      
+    range_queries:
+      crossing_start_finish: "Split into two ranges: [start, length) and [0, end)"
+
+# =============================================================================
+# SECTION 4: CURVATURE COMPUTATION
+# =============================================================================
+
+curvature_computation:
+
+  description: |
+    Curvature (κ) measures how sharply the track turns. Positive curvature
+    indicates left turn, negative indicates right turn (or vice versa by
+    convention). Curvature is the inverse of the turn radius.
+    
+  # ---------------------------------------------------------------------------
+  # 4.1 MATHEMATICAL DEFINITION
+  # ---------------------------------------------------------------------------
+  definition:
+    
+    curvature_formula: "κ = 1 / R"
+    
+    where:
+      kappa: "Curvature in 1/meters"
+      R: "Instantaneous radius of curvature in meters"
+      
+    sign_convention:
+      positive: "Left turn (counter-clockwise)"
+      negative: "Right turn (clockwise)"
+      zero: "Straight"
+      
+    units:
+      curvature: "1/m (inverse meters)"
+      typical_range: "[-0.1, 0.1]"        # 10m to ∞ radius
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 COMPUTATION METHODS
+  # ---------------------------------------------------------------------------
+  methods:
+    
+    # Primary method: Three-point circle
+    primary:
+      name: "Three-point circumradius"
+      
+      description: |
+        Fit a circle through three consecutive points.
+        Curvature is 1/radius of this circle.
+        
+      algorithm:
+        input: "Points P1, P2, P3"
+        
+        steps:
+          - step: "Compute vectors a = P2 - P1, b = P3 - P2"
+          - step: "Compute cross product: cross = a.x × b.y - a.y × b.x"
+          - step: "Compute chord lengths: |a|, |b|, |c| where c = P3 - P1"
+          - step: "Compute radius: R = (|a| × |b| × |c|) / (2 × |cross|)"
+          - step: "Curvature: κ = sign(cross) / R"
+          
+        edge_cases:
+          collinear_points: "cross ≈ 0, κ = 0 (straight)"
+          coincident_points: "Skip, use adjacent triplet"
+          
+      spacing:
+        recommended_m: 5                  # Use points 5m apart
+        minimum_m: 2
+        maximum_m: 20
+        
+    # Secondary method: Heading derivative
+    secondary:
+      name: "Heading rate of change"
+      
+      description: |
+        Curvature from rate of heading change with distance.
+        κ = dθ/ds where θ is heading, s is arc length.
+        
+      algorithm:
+        input: "Heading at points, distance between points"
+        
+        steps:
+          - step: "Compute heading difference: Δθ = θ_{i+1} - θ_{i-1}"
+          - step: "Handle wraparound: if |Δθ| > π, adjust by ±2π"
+          - step: "Compute distance: Δs = s_{i+1} - s_{i-1}"
+          - step: "Curvature: κ = Δθ / Δs"
+          
+      advantage: "Smoother when heading data is high quality (Method 3)"
+      disadvantage: "Heading noise amplified by differentiation"
+      
+    # Tertiary method: From IMU (Method 3 only)
+    tertiary:
+      name: "IMU yaw rate"
+      
+      description: |
+        Direct curvature from IMU: κ = ω / v
+        where ω is yaw rate, v is speed.
+        
+      availability: "Only when Method 3 fusion data available"
+      
+      advantage: "Highest fidelity, direct measurement"
+      disadvantage: "Speed must be accurate, fails at low speed"
+      
+    # Method selection
+    selection:
+      priority:
+        - "Use tertiary if Method 3 data available AND speed > 10 m/s"
+        - "Use primary as default"
+        - "Use secondary for validation/cross-check"
+        
+      fusion:
+        when: "Multiple methods available"
+        method: "Weighted average based on method confidence"
+        
+  # ---------------------------------------------------------------------------
+  # 4.3 CURVATURE FILTERING
+  # ---------------------------------------------------------------------------
+  filtering:
+    
+    description: |
+      Raw curvature is noisy because it's a second derivative of position.
+      Filtering is required but must preserve true geometry.
+      
+    # Stage 1: Outlier removal
+    outlier_removal:
+      method: "Hampel filter"
+      window_points: 7
+      threshold_mad: 3.0
+      action: "Replace outlier with local median"
+      
+    # Stage 2: Smoothing
+    smoothing:
+      method: "Savitzky-Golay"
+      window_points: 11
+      polynomial_order: 3
+      
+    # Stage 3: Curvature rate limiting
+    rate_limiting:
+      description: "Curvature cannot change faster than physics allows"
+      max_curvature_rate: 0.01            # 1/m per meter
+      method: "Clip rate, not value"
+      
+    # Constraints
+    constraints:
+      preserve_sign_changes: true         # Direction changes are real
+      preserve_peaks: true                # Apex curvature matters
+      zero_crossing_hysteresis: 0.001     # Prevent chatter at transitions
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 CURVATURE VALIDATION
+  # ---------------------------------------------------------------------------
+  validation:
+    
+    sanity_checks:
+      
+      - check: "curvature_magnitude"
+        max_value: 0.15                   # Minimum 6.7m radius
+        action_on_violation: "FLAG_SUSPECT"
+        
+      - check: "curvature_continuity"
+        max_jump: 0.02                    # Max change between adjacent points
+        action_on_violation: "SMOOTH_LOCALLY"
+        
+      - check: "integrated_heading"
+        description: "Sum of curvature × distance should ≈ 2π for closed track"
+        tolerance_rad: 0.1                # ~6 degrees
+        action_on_violation: "FLAG_GEOMETRY_ERROR"
+        
+      - check: "left_right_balance"
+        description: "Total left curvature ≈ total right for closed track"
+        tolerance_percent: 10
+        action_on_violation: "FLAG_GEOMETRY_ERROR"
+
+# =============================================================================
+# SECTION 5: SEGMENTATION STRATEGY
+# =============================================================================
+
+segmentation_strategy:
+
+  description: |
+    Divide the track into logical segments for coaching, learning, and analysis.
+    Segments are the fundamental unit of track geometry for downstream systems.
+    
+  # ---------------------------------------------------------------------------
+  # 5.1 SEGMENT TYPES
+  # ---------------------------------------------------------------------------
+  segment_types:
+    
+    - type: "STRAIGHT"
+      code: "S"
+      definition:
+        curvature_max: 0.004              # |κ| < 0.004 → R > 250m
+      minimum_length_m: 50
+      properties:
+        typical_behavior: "Acceleration zone"
+        voice_relevance: "Braking point approach"
+        
+    - type: "CORNER_ENTRY"
+      code: "CE"
+      definition:
+        curvature_increasing: true
+        from_straight: true
+      typical_length_m: 20-50
+      properties:
+        critical_phase: "Brake release, turn-in"
+        voice_relevance: "HIGH - turn-in point"
+        
+    - type: "CORNER_APEX"
+      code: "CA"
+      definition:
+        curvature_local_maximum: true
+      typical_length_m: 10-30
+      properties:
+        critical_phase: "Minimum speed, maximum lateral g"
+        voice_relevance: "NONE - driver committed"
+        
+    - type: "CORNER_EXIT"
+      code: "CX"
+      definition:
+        curvature_decreasing: true
+        to_straight: true
+      typical_length_m: 20-50
+      properties:
+        critical_phase: "Throttle application, track-out"
+        voice_relevance: "MEDIUM - throttle timing"
+        
+    - type: "CORNER_MID"
+      code: "CM"
+      definition:
+        constant_curvature: true
+        neither_entry_nor_exit: true
+      properties:
+        typical_behavior: "Maintenance throttle, steady state"
+        voice_relevance: "LOW"
+        
+    - type: "CHICANE"
+      code: "CH"
+      definition:
+        two_or_more_corners: true
+        alternating_direction: true
+        spacing_m: "<50"
+      properties:
+        treated_as: "Single compound segment"
+        voice_relevance: "HIGH - rhythm critical"
+        
+  # ---------------------------------------------------------------------------
+  # 5.2 SEGMENTATION ALGORITHM
+  # ---------------------------------------------------------------------------
+  algorithm:
+    
+    name: "Curvature-based finite state machine"
+    deterministic: true
+    
+    # State machine definition
+    states:
+      - STRAIGHT
+      - ENTRY
+      - APEX
+      - MID
+      - EXIT
+      
+    # Transition thresholds
+    thresholds:
+      straight_curvature: 0.004           # Below this = straight
+      corner_curvature: 0.008             # Above this = definite corner
+      apex_derivative: 0.001              # Curvature rate for apex detection
+      hysteresis: 0.001                   # Prevent oscillation
+      
+    # State transition rules
+    transitions:
+      
+      STRAIGHT_to_ENTRY:
+        condition: "κ crosses above straight_curvature AND increasing"
+        
+      ENTRY_to_APEX:
+        condition: "dκ/ds changes sign (κ stops increasing)"
+        
+      APEX_to_EXIT:
+        condition: "dκ/ds < -apex_derivative (κ decreasing)"
+        
+      APEX_to_MID:
+        condition: "dκ/ds ≈ 0 for >20m (constant curvature)"
+        
+      MID_to_EXIT:
+        condition: "κ starts decreasing"
+        
+      EXIT_to_STRAIGHT:
+        condition: "κ crosses below straight_curvature"
+        
+      EXIT_to_ENTRY:
+        condition: "κ starts increasing again (chicane/S-curve)"
+        
+    # Processing steps
+    process:
+      
+      - step: "compute_curvature_derivative"
+        method: "dκ/ds at each point using central difference"
+        
+      - step: "apply_hysteresis"
+        method: "Schmitt trigger on curvature thresholds"
+        
+      - step: "run_state_machine"
+        method: "Iterate through points, track state transitions"
+        output: "State label for each point"
+        
+      - step: "group_into_segments"
+        method: "Consecutive points with same state → segment"
+        
+      - step: "merge_short_segments"
+        method: "Segments < minimum_length absorbed into neighbors"
+        minimum_length_m: 15
+        
+      - step: "identify_chicanes"
+        method: "Detect ENTRY-APEX-EXIT-ENTRY-APEX-EXIT patterns"
+        max_inter_corner_distance_m: 50
+        
+      - step: "assign_segment_ids"
+        method: "Sequential numbering from start/finish"
+        
+  # ---------------------------------------------------------------------------
+  # 5.3 SEGMENT PROPERTIES
+  # ---------------------------------------------------------------------------
+  segment_properties:
+    
+    per_segment:
+      
+      # Identity
+      segment_id: "Integer, sequential from 0"
+      segment_type: "STRAIGHT | CORNER_ENTRY | CORNER_APEX | ..."
+      segment_name: "String, e.g., 'T1_entry', 'S3'"
+      
+      # Geometry bounds
+      start_distance_m: "Float64"
+      end_distance_m: "Float64"
+      length_m: "Float64"
+      
+      # Geometry statistics
+      curvature_mean: "Float32"
+      curvature_max: "Float32"
+      curvature_min: "Float32"
+      curvature_std: "Float32"
+      
+      heading_entry_deg: "Float32"
+      heading_exit_deg: "Float32"
+      heading_change_deg: "Float32"
+      
+      direction: "LEFT | RIGHT | STRAIGHT"
+      
+      # Position
+      centroid_x_m: "Float32"
+      centroid_y_m: "Float32"
+      apex_distance_m: "Float32 (for corners)"
+      
+      # Confidence
+      confidence_mean: "Float32"
+      confidence_min: "Float32"
+      point_count: "Integer"
+      
+      # Links
+      previous_segment_id: "Integer"
+      next_segment_id: "Integer"
+      parent_corner_id: "Integer (for entry/apex/exit grouping)"
+      
+  # ---------------------------------------------------------------------------
+  # 5.4 CORNER GROUPING
+  # ---------------------------------------------------------------------------
+  corner_grouping:
+    
+    description: |
+      Group related segments (entry, apex, exit) into logical corners.
+      A "corner" is the complete turn, while segments are phases.
+      
+    corner_definition:
+      components: ["CORNER_ENTRY", "CORNER_APEX", "CORNER_MID", "CORNER_EXIT"]
+      minimum_components: 2               # At least apex + one other
+      
+    corner_properties:
+      corner_id: "Integer"
+      corner_name: "String, e.g., 'Turn 1', 'Copse'"
+      
+      entry_segment_id: "Integer"
+      apex_segment_id: "Integer"
+      exit_segment_id: "Integer"
+      
+      total_length_m: "Float64"
+      total_heading_change_deg: "Float32"
+      apex_curvature: "Float32"
+      apex_radius_m: "Float32"
+      
+      direction: "LEFT | RIGHT"
+      classification: "HAIRPIN | SLOW | MEDIUM | FAST | KINK"
+      
+    classification_thresholds:
+      hairpin_radius_m: 15
+      slow_radius_m: 40
+      medium_radius_m: 80
+      fast_radius_m: 150
+      kink_radius_m: 300
+
+# =============================================================================
+# SECTION 6: CONTINUITY CONSTRAINTS
+# =============================================================================
+
+continuity_constraints:
+
+  description: |
+    Track geometry must be continuous and smooth. Discontinuities indicate
+    errors in data or processing. These constraints are enforced during
+    geometry construction.
+    
+  # ---------------------------------------------------------------------------
+  # 6.1 POSITION CONTINUITY (C0)
+  # ---------------------------------------------------------------------------
+  position_continuity:
+    
+    requirement: "No gaps in track geometry"
+    
+    constraint:
+      max_gap_m: 2.0                       # Maximum distance between adjacent points
+      
+    detection:
+      method: "Check distance between consecutive points"
+      formula: "gap = |P_{i+1} - P_i|"
+      
+    enforcement:
+      if_gap_detected:
+        small_gap: "<5m: Linear interpolation"
+        medium_gap: "5-20m: Cubic spline interpolation"
+        large_gap: ">20m: FLAG_GEOMETRY_ERROR, attempt repair"
+        
+    repair:
+      method: "Cubic spline through surrounding valid points"
+      confidence_penalty: 0.2             # Interpolated points lower confidence
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 TANGENT CONTINUITY (C1)
+  # ---------------------------------------------------------------------------
+  tangent_continuity:
+    
+    requirement: "Heading changes smoothly (no kinks)"
+    
+    constraint:
+      max_heading_jump_deg: 5             # Maximum instantaneous heading change
+      
+    detection:
+      method: "Check heading difference between consecutive points"
+      formula: "Δθ = |heading_{i+1} - heading_i|"
+      handle_wraparound: true
+      
+    enforcement:
+      if_discontinuity_detected:
+        action: "Smooth heading using weighted average of neighbors"
+        window_points: 5
+        
+    physical_limit:
+      description: "Heading cannot change faster than vehicle can turn"
+      max_heading_rate_deg_per_m: 10      # At 50 m/s, this is 500 deg/s
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 CURVATURE CONTINUITY (C2)
+  # ---------------------------------------------------------------------------
+  curvature_continuity:
+    
+    requirement: "Curvature changes smoothly (no abrupt corners)"
+    
+    constraint:
+      max_curvature_jump: 0.01            # Maximum instantaneous curvature change
+      
+    detection:
+      method: "Check curvature difference between consecutive points"
+      
+    enforcement:
+      if_discontinuity_detected:
+        action: "Flag as geometry artifact, apply local smoothing"
+        
+    note: |
+      Perfect C2 continuity is not always achievable with real data.
+      Relax constraint at segment boundaries where geometric transitions
+      are expected (e.g., straight to corner entry).
+      
+  # ---------------------------------------------------------------------------
+  # 6.4 CLOSURE CONTINUITY
+  # ---------------------------------------------------------------------------
+  closure_continuity:
+    
+    requirement: "Track forms a closed loop with smooth junction"
+    
+    constraints:
+      position_closure_m: 1.0             # End within 1m of start
+      heading_closure_deg: 2.0            # Heading matches at closure
+      curvature_closure: 0.005            # Curvature matches at closure
+      
+    enforcement:
+      method: "Blend last 100m with first 100m"
+      
+      blending:
+        blend_region_m: 100
+        blend_function: "Hermite spline"
+        
+        process:
+          - step: "Identify blend region: [length-100, length] and [0, 100]"
+          - step: "Compute target values at junction"
+          - step: "Apply smooth transition to match targets"
+          
+    validation:
+      check_after_blending: true
+      max_residual_error_m: 0.5
+
+# =============================================================================
+# SECTION 7: GEOMETRY SANITY CHECKS
+# =============================================================================
+
+sanity_checks:
+
+  description: |
+    Comprehensive checks to ensure geometry is physically plausible and
+    usable for downstream systems. Failed checks may trigger repair,
+    confidence reduction, or geometry rejection.
+    
+  # ---------------------------------------------------------------------------
+  # 7.1 GLOBAL CHECKS
+  # ---------------------------------------------------------------------------
+  global_checks:
+    
+    - check: "track_length_range"
+      description: "Track length within valid range"
+      minimum_m: 400
+      maximum_m: 30000
+      action_on_fail: "REJECT_GEOMETRY"
+      
+    - check: "track_closure"
+      description: "Track forms closed loop"
+      tolerance_m: 5
+      action_on_fail: "ATTEMPT_REPAIR"
+      
+    - check: "no_self_intersection"
+      description: "Track does not cross itself"
+      method: "Bentley-Ottmann sweep line algorithm"
+      action_on_fail: "REJECT_GEOMETRY"
+      
+    - check: "consistent_winding"
+      description: "Track winds consistently (no figure-8 unless intended)"
+      method: "Signed area should be non-zero"
+      action_on_fail: "FLAG_WARNING"
+      
+    - check: "integrated_curvature"
+      description: "Total curvature ≈ ±2π for closed track"
+      tolerance_rad: 0.2
+      action_on_fail: "FLAG_GEOMETRY_ERROR"
+      
+    - check: "aspect_ratio"
+      description: "Track bounding box not extremely elongated"
+      max_ratio: 20                       # Length/width
+      action_on_fail: "FLAG_WARNING"
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 LOCAL CHECKS
+  # ---------------------------------------------------------------------------
+  local_checks:
+    
+    - check: "minimum_radius"
+      description: "No corners tighter than physically plausible"
+      minimum_radius_m: 5                 # 5m = ~0.2 curvature
+      action_on_fail: "FLAG_POINT_SUSPECT"
+      
+    - check: "maximum_straight"
+      description: "No impossibly long straights"
+      maximum_straight_m: 3000
+      action_on_fail: "FLAG_WARNING"
+      
+    - check: "point_spacing"
+      description: "Points evenly spaced"
+      expected_spacing_m: 1.0
+      tolerance_percent: 50
+      action_on_fail: "RESAMPLE"
+      
+    - check: "heading_consistency"
+      description: "Heading matches direction of travel"
+      method: "heading ≈ atan2(Δy, Δx)"
+      tolerance_deg: 10
+      action_on_fail: "RECOMPUTE_HEADING"
+      
+    - check: "curvature_consistency"
+      description: "Curvature matches heading change"
+      method: "κ × Δs ≈ Δθ"
+      tolerance_percent: 20
+      action_on_fail: "FLAG_POINT_SUSPECT"
+      
+  # ---------------------------------------------------------------------------
+  # 7.3 STATISTICAL CHECKS
+  # ---------------------------------------------------------------------------
+  statistical_checks:
+    
+    - check: "curvature_distribution"
+      description: "Curvature distribution is plausible"
+      checks:
+        - "Mean curvature near zero (balanced left/right)"
+        - "Standard deviation < 0.05"
+        - "No more than 5% of points at extreme values"
+      action_on_fail: "FLAG_WARNING"
+      
+    - check: "confidence_distribution"
+      description: "Confidence scores are well-distributed"
+      checks:
+        - "Mean confidence > 0.7"
+        - "Less than 10% of points below 0.5"
+        - "No long runs of low confidence"
+      action_on_fail: "FLAG_WARNING"
+      
+    - check: "segment_count"
+      description: "Reasonable number of segments"
+      minimum: 5                          # At least 5 segments
+      maximum: 200                        # Not over-segmented
+      action_on_fail: "ADJUST_SEGMENTATION_THRESHOLDS"
+
+# =============================================================================
+# SECTION 8: CONFIDENCE MODELING
+# =============================================================================
+
+confidence_modeling:
+
+  description: |
+    Track geometry confidence affects all downstream systems. This section
+    defines how confidence is computed, how it decays, and how it recovers.
+    
+  # ---------------------------------------------------------------------------
+  # 8.1 CONFIDENCE COMPUTATION
+  # ---------------------------------------------------------------------------
+  computation:
+    
+    # Point-level confidence (from input data)
+    point_confidence:
+      source: "Input fused data confidence"
+      range: "[0, 1]"
+      
+      composition:
+        gps_quality_weight: 0.4
+        lap_agreement_weight: 0.3
+        sample_count_weight: 0.2
+        imu_fusion_weight: 0.1            # If available
+        
+    # Segment-level confidence
+    segment_confidence:
+      method: "Aggregation of point confidences"
+      
+      formula: |
+        segment_confidence = min(
+          mean(point_confidences),
+          min(point_confidences) × 1.2,   # Boosted minimum
+          percentile_10(point_confidences) × 1.1
+        )
+        
+      rationale: |
+        Segment confidence is limited by its weakest points, but we don't
+        want a single bad point to tank the entire segment. Using a blend
+        of mean, minimum, and low percentile balances these concerns.
+        
+    # Track-level confidence
+    track_confidence:
+      method: "Length-weighted average of segment confidences"
+      
+      formula: |
+        track_confidence = Σ(segment_confidence × segment_length) / total_length
+        
+      ceiling:
+        method_1: 0.85
+        method_2: 0.90
+        method_3: 0.92
+        
+  # ---------------------------------------------------------------------------
+  # 8.2 CONFIDENCE DECAY
+  # ---------------------------------------------------------------------------
+  decay:
+    
+    description: |
+      Geometry confidence decays over time and under certain conditions.
+      Decay represents increasing uncertainty about geometry validity.
+      
+    # Time-based decay
+    time_decay:
+      
+      description: "Geometry ages and may become stale"
+      
+      factors:
+        - factor: "time_since_creation"
+          decay_rate: 0.001               # 0.1% per hour
+          minimum_after_decay: 0.7        # Never decay below 70%
+          
+        - factor: "time_since_last_validation"
+          decay_rate: 0.002               # 0.2% per hour without validation
+          minimum_after_decay: 0.6
+          
+      formula: |
+        decayed_confidence = max(
+          original_confidence × exp(-decay_rate × hours),
+          minimum_after_decay
+        )
+        
+    # Condition-based decay
+    condition_decay:
+      
+      - condition: "track_surface_change_reported"
+        decay_amount: 0.1
+        reason: "Surface may have changed grip characteristics"
+        
+      - condition: "weather_transition"
+        decay_amount: 0.15
+        reason: "Track conditions changed"
+        
+      - condition: "session_gap_hours"
+        decay_per_hour: 0.01
+        maximum_decay: 0.2
+        reason: "Time elapsed since last use"
+        
+      - condition: "inconsistent_lap_times"
+        decay_amount: 0.1
+        threshold_percent: 5              # Lap times vary >5%
+        reason: "Performance inconsistent with geometry"
+        
+    # Usage-based decay
+    usage_decay:
+      
+      - condition: "repeated_physics_violations"
+        description: "Driver frequently exceeds computed envelopes"
+        decay_per_violation: 0.01
+        maximum_decay: 0.15
+        reason: "Geometry may underestimate vehicle capability"
+        
+      - condition: "consistent_position_offset"
+        description: "GPS consistently offset from expected position"
+        threshold_m: 5
+        decay_amount: 0.1
+        reason: "Geometry may not match actual track"
+        
+  # ---------------------------------------------------------------------------
+  # 8.3 CONFIDENCE RECOVERY
+  # ---------------------------------------------------------------------------
+  recovery:
+    
+    description: |
+      Confidence can be recovered through validation and successful use.
+      Recovery is slower than decay (conservative approach).
+      
+    # Validation-based recovery
+    validation_recovery:
+      
+      - method: "successful_lap_completion"
+        description: "Lap completed with consistent data"
+        recovery_amount: 0.02
+        maximum_recovery_per_session: 0.1
+        
+      - method: "multi_lap_consistency"
+        description: "Multiple laps show consistent geometry"
+        required_laps: 3
+        recovery_amount: 0.05
+        
+      - method: "gps_position_agreement"
+        description: "GPS matches expected position on track"
+        threshold_m: 3
+        recovery_amount: 0.01
+        per: "lap"
+        
+    # Relearning recovery
+    relearning_recovery:
+      
+      - method: "geometry_update"
+        description: "New laps incorporated into geometry"
+        recovery_amount: 0.1
+        maximum_recovery: 0.2
+        requirement: "At least 2 new high-quality laps"
+        
+    # Recovery limits
+    limits:
+      maximum_confidence: "Method ceiling (0.85/0.90/0.92)"
+      recovery_rate_cap: 0.05             # Max 5% recovery per hour
+      require_no_active_decay: true       # Can't recover while decaying
+      
+  # ---------------------------------------------------------------------------
+  # 8.4 CONFIDENCE EFFECTS ON DOWNSTREAM
+  # ---------------------------------------------------------------------------
+  downstream_effects:
+    
+    description: |
+      Geometry confidence directly affects system behavior. Lower confidence
+      means more conservative operation.
+      
+    # Effect categories
+    effects:
+      
+      # Voice output
+      voice:
+        full_confidence_threshold: 0.85
+        reduced_confidence_threshold: 0.70
+        disabled_threshold: 0.50
+        
+        behavior:
+          above_0.85: "Normal voice coaching"
+          0.70_to_0.85: "Critical-only voice, safety warnings"
+          0.50_to_0.70: "Safety warnings only"
+          below_0.50: "Voice disabled"
+          
+      # Physics envelope computation
+      physics:
+        full_confidence_threshold: 0.80
+        reduced_threshold: 0.60
+        
+        behavior:
+          above_0.80: "Normal envelope computation"
+          0.60_to_0.80: "Add 10% safety margin to envelopes"
+          below_0.60: "Add 20% safety margin"
+          
+      # Learning system
+      learning:
+        full_confidence_threshold: 0.85
+        reduced_threshold: 0.70
+        disabled_threshold: 0.50
+        
+        behavior:
+          above_0.85: "Normal learning, segment stats updated"
+          0.70_to_0.85: "Learning continues, higher validation threshold"
+          0.50_to_0.70: "Learning paused, recording only"
+          below_0.50: "No learning, data flagged unreliable"
+          
+      # Segment-level effects
+      segment_specific:
+        description: "Low-confidence segments are treated conservatively"
+        
+        per_segment:
+          if_confidence_below_0.6:
+            - "Envelope computed with extra 15% margin"
+            - "Voice output disabled for this segment"
+            - "Learning paused for this segment"
+            - "Flag segment in telemetry output"
+
+# =============================================================================
+# SECTION 9: OUTPUT SPECIFICATION
+# =============================================================================
+
+output_specification:
+
+  description: |
+    The geometry builder produces a complete, deterministic track geometry
+    structure. This output feeds all downstream systems.
+    
+  # ---------------------------------------------------------------------------
+  # 9.1 OUTPUT STRUCTURE
+  # ---------------------------------------------------------------------------
+  structure:
+    
+    type: "TrackGeometry"
+    
+    root:
+      metadata: "TrackMetadata"
+      centerline: "Array<CenterlinePoint>"
+      segments: "Array<Segment>"
+      corners: "Array<Corner>"
+      spatial_index: "SpatialIndex"
+      confidence_model: "ConfidenceModel"
+      audit_log: "Array<AuditEntry>"
+      
+  # ---------------------------------------------------------------------------
+  # 9.2 DATA STRUCTURES
+  # ---------------------------------------------------------------------------
+  structures:
+    
+    TrackMetadata:
+      track_id: "UUID, deterministic from content hash"
+      track_name: "String or null"
+      creation_timestamp: "ISO 8601"
+      creation_method: "1 | 2 | 3"
+      
+      geometry:
+        total_length_m: "Float64"
+        num_corners: "Integer"
+        num_straights: "Integer"
+        bounding_box:
+          min_x_m: "Float64"
+          max_x_m: "Float64"
+          min_y_m: "Float64"
+          max_y_m: "Float64"
+          
+      coordinate_system:
+        origin_latitude: "Float64"
+        origin_longitude: "Float64"
+        projection: "ENU"
+        
+      confidence:
+        overall: "Float32"
+        method_ceiling: "Float32"
+        creation_quality: "HIGH | MEDIUM | LOW"
+        
+      source:
+        num_laps_used: "Integer"
+        num_laps_rejected: "Integer"
+        reference_map_type: "String or null"
+        imu_fusion_used: "Boolean"
+        
+    CenterlinePoint:
+      distance_m: "Float64"
+      x_m: "Float64"
+      y_m: "Float64"
+      latitude_deg: "Float64"
+      longitude_deg: "Float64"
+      heading_rad: "Float32"
+      curvature: "Float32"
+      curvature_derivative: "Float32"
+      confidence: "Float32"
+      segment_id: "Integer"
+      flags: "Bitfield"
+      
+    Segment:
+      segment_id: "Integer"
+      segment_type: "Enum"
+      segment_name: "String"
+      
+      bounds:
+        start_distance_m: "Float64"
+        end_distance_m: "Float64"
+        length_m: "Float64"
+        
+      geometry:
+        curvature_mean: "Float32"
+        curvature_max: "Float32"
+        curvature_min: "Float32"
+        heading_entry_rad: "Float32"
+        heading_exit_rad: "Float32"
+        apex_distance_m: "Float64 (optional)"
+        
+      direction: "LEFT | RIGHT | STRAIGHT"
+      
+      confidence:
+        mean: "Float32"
+        minimum: "Float32"
+        
+      links:
+        previous_segment_id: "Integer"
+        next_segment_id: "Integer"
+        corner_id: "Integer or null"
+        
+    Corner:
+      corner_id: "Integer"
+      corner_name: "String"
+      classification: "HAIRPIN | SLOW | MEDIUM | FAST | KINK"
+      direction: "LEFT | RIGHT"
+      
+      segments:
+        entry_segment_id: "Integer or null"
+        apex_segment_id: "Integer"
+        mid_segment_ids: "Array<Integer>"
+        exit_segment_id: "Integer or null"
+        
+      geometry:
+        total_length_m: "Float64"
+        heading_change_deg: "Float32"
+        apex_radius_m: "Float32"
+        apex_distance_m: "Float64"
+        
+      confidence: "Float32"
+      
+  # ---------------------------------------------------------------------------
+  # 9.3 AUDIT LOG
+  # ---------------------------------------------------------------------------
+  audit_log:
+    
+    description: |
+      Every significant decision during geometry construction is logged.
+      This enables full traceability and debugging.
+      
+    entry_format:
+      timestamp: "ISO 8601"
+      operation: "String"
+      parameters: "Object"
+      result: "String"
+      
+    logged_operations:
+      - "coordinate_system_established"
+      - "input_validation_result"
+      - "outlier_removed"
+      - "point_interpolated"
+      - "smoothing_applied"
+      - "continuity_violation_repaired"
+      - "sanity_check_failed"
+      - "segment_created"
+      - "corner_identified"
+      - "confidence_computed"
+      
+  # ---------------------------------------------------------------------------
+  # 9.4 DETERMINISM GUARANTEE
+  # ---------------------------------------------------------------------------
+  determinism:
+    
+    guarantee: |
+      Given identical input data, the geometry builder MUST produce
+      bit-identical output. This is achieved through:
+      
+    measures:
+      - "No random number generation"
+      - "Stable sorting algorithms only"
+      - "Fixed iteration order for all collections"
+      - "Deterministic floating-point operations (no fast-math)"
+      - "Content-addressable track_id (hash of geometry)"
+      
+    verification:
+      method: "Hash of output structure"
+      algorithm: "SHA-256"
+      stored_in: "metadata.content_hash"
+
+# =============================================================================
+# SECTION 10: PROCESSING PIPELINE
+# =============================================================================
+
+processing_pipeline:
+
+  description: |
+    Complete processing pipeline from input to output.
+    Each stage is deterministic and produces auditable intermediate results.
+    
+  stages:
+    
+    - stage: 1
+      name: "Input Validation"
+      input: "FusedTrackData"
+      output: "ValidatedInput"
+      operations:
+        - "Validate all required fields present"
+        - "Check value ranges"
+        - "Convert to local coordinates"
+        - "Verify monotonic distance"
+      abort_conditions:
+        - "Missing required fields"
+        - "Invalid coordinates"
+        
+    - stage: 2
+      name: "Resampling"
+      input: "ValidatedInput"
+      output: "UniformPoints"
+      operations:
+        - "Interpolate to uniform 1m spacing"
+        - "Use cubic spline for position"
+        - "Preserve confidence (use minimum in interval)"
+      abort_conditions:
+        - "Gap too large to interpolate (>50m)"
+        
+    - stage: 3
+      name: "Curvature Computation"
+      input: "UniformPoints"
+      output: "PointsWithCurvature"
+      operations:
+        - "Compute curvature using three-point method"
+        - "Apply Hampel filter for outliers"
+        - "Apply Savitzky-Golay smoothing"
+        - "Compute curvature derivative"
+      abort_conditions:
+        - "Curvature integration fails closure check"
+        
+    - stage: 4
+      name: "Continuity Enforcement"
+      input: "PointsWithCurvature"
+      output: "ContinuousGeometry"
+      operations:
+        - "Check and enforce C0 continuity"
+        - "Check and enforce C1 continuity"
+        - "Apply closure blending"
+      abort_conditions:
+        - "Continuity cannot be achieved"
+        
+    - stage: 5
+      name: "Sanity Checks"
+      input: "ContinuousGeometry"
+      output: "ValidatedGeometry"
+      operations:
+        - "Run all global checks"
+        - "Run all local checks"
+        - "Run statistical checks"
+        - "Flag or reject based on results"
+      abort_conditions:
+        - "Critical sanity check fails"
+        
+    - stage: 6
+      name: "Segmentation"
+      input: "ValidatedGeometry"
+      output: "SegmentedGeometry"
+      operations:
+        - "Compute curvature derivative"
+        - "Run state machine segmentation"
+        - "Merge short segments"
+        - "Identify corners and chicanes"
+        - "Assign segment IDs and names"
+      abort_conditions:
+        - "Segmentation produces invalid structure"
+        
+    - stage: 7
+      name: "Confidence Computation"
+      input: "SegmentedGeometry"
+      output: "ScoredGeometry"
+      operations:
+        - "Compute point confidences"
+        - "Aggregate to segment confidences"
+        - "Compute track confidence"
+        - "Apply method ceiling"
+      abort_conditions: []
+        
+    - stage: 8
+      name: "Index Building"
+      input: "ScoredGeometry"
+      output: "IndexedGeometry"
+      operations:
+        - "Build primary distance array"
+        - "Build R-tree spatial index"
+        - "Precompute lookup tables"
+      abort_conditions: []
+        
+    - stage: 9
+      name: "Output Generation"
+      input: "IndexedGeometry"
+      output: "TrackGeometry"
+      operations:
+        - "Assemble final structure"
+        - "Generate audit log"
+        - "Compute content hash"
+        - "Serialize to output format"
+      abort_conditions: []
+
+# =============================================================================
+# END OF GEOMETRY BUILDER SPECIFICATION
+# =============================================================================
+#
+# CERTIFICATION STATEMENT:
+# This specification defines a deterministic, auditable geometry builder.
+# Given identical input, the output is guaranteed to be identical.
+# Every decision is logged for traceability.
+#
+# Geometry confidence flows through to all downstream systems:
+# - Low confidence → Conservative physics envelopes
+# - Low confidence → Reduced or disabled voice output
+# - Low confidence → Paused learning
+#
+# The system fails safely: unclear geometry produces no coaching,
+# not wrong coaching.
+#
+# =============================================================================
