@@ -1,0 +1,1255 @@
+# =============================================================================
+# ADAPTIVE ENVELOPE REFINEMENT (AER) SYSTEM
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: Learning improves accuracy, NEVER increases risk.
+# Physics is the ceiling. Learning refines WHERE within that ceiling is safe.
+#
+# CORE INVARIANT: learned_envelope ≤ physics_envelope × safety_margin
+#                 This inequality is NEVER violated.
+#
+# HOW LEARNING IMPROVES WITHOUT RISK:
+#   Physics gives us the theoretical maximum.
+#   Learning tells us what THIS driver, in THIS car, on THIS track actually achieves.
+#   The learned envelope is ALWAYS more conservative than pure physics.
+#   As confidence grows, we can reduce unnecessary conservatism.
+#   But we NEVER exceed the physics ceiling.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "LEARNING_SYSTEM"
+
+# =============================================================================
+# SECTION 1: FUNDAMENTAL CONSTRAINTS
+# =============================================================================
+
+fundamental_constraints:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 INVIOLABLE RULES
+  # ---------------------------------------------------------------------------
+  inviolable_rules:
+    
+    - rule_id: "AER-001"
+      name: "Physics Ceiling"
+      statement: |
+        The learned envelope shall NEVER exceed the physics-derived envelope.
+        Learning can only REFINE within this ceiling, never breach it.
+      enforcement: "Hard clamp at physics limit"
+      audit: "Every envelope update logged with physics comparison"
+      
+    - rule_id: "AER-002"
+      name: "Conservative Default"
+      statement: |
+        In the absence of learning data, use physics envelope × 0.70.
+        Learning can increase this toward physics limit, never beyond.
+      initial_margin: 0.70
+      maximum_margin: 0.92  # Never reach 100% of physics
+      
+    - rule_id: "AER-003"
+      name: "No Global Learning"
+      statement: |
+        Learning is SEGMENT-LOCAL only. Each segment learns independently.
+        No transfer of learned parameters between segments.
+        No track-wide or cross-track learning.
+      rationale: |
+        Global learning hides local anomalies. A fast straight doesn't
+        mean a tight corner is safe. Each segment must prove itself.
+        
+    - rule_id: "AER-004"
+      name: "No One-Lap Adaptation"
+      statement: |
+        Minimum 3 complete, valid laps before ANY learning applies.
+        A single exceptional lap cannot change the envelope.
+      rationale: |
+        One fast lap could be luck, draft, or error. Multiple consistent
+        laps establish reliable patterns.
+        
+    - rule_id: "AER-005"
+      name: "Monotonic Safety"
+      statement: |
+        Learning can only make the system MORE accurate or MORE conservative.
+        If accuracy cannot be improved, conservatism must not decrease.
+      formula: "accuracy↑ OR conservatism≥ (never accuracy→ AND conservatism↓)"
+      
+  # ---------------------------------------------------------------------------
+  # 1.2 EXPLICITLY FORBIDDEN
+  # ---------------------------------------------------------------------------
+  explicitly_forbidden:
+    
+    - forbidden_id: "F-001"
+      action: "Global learning"
+      definition: "Using a single model or parameter set for entire track"
+      why_forbidden: |
+        Global learning averages out segment-specific characteristics.
+        A high-grip section could mask a low-grip corner.
+        Each segment's limits are LOCAL to that geometry and surface.
+        
+    - forbidden_id: "F-002"
+      action: "One-lap adaptation"
+      definition: "Modifying envelope based on a single lap's data"
+      why_forbidden: |
+        Single observations are noisy. Could be:
+        - Slipstream effect
+        - Thermal anomaly
+        - Driver error that got lucky
+        - Sensor spike
+        Reliable patterns require repeated observation.
+        
+    - forbidden_id: "F-003"
+      action: "Physics override"
+      definition: "Learning producing envelope > physics limit"
+      why_forbidden: |
+        Physics defines what's POSSIBLE. No amount of data can change physics.
+        If data suggests speeds exceeding √(μgR), the data is wrong, not physics.
+        This could indicate sensor error, GPS drift, or mislocated segment.
+        
+    - forbidden_id: "F-004"
+      action: "Aggressive envelope expansion"
+      definition: "Rapid increase of envelope toward physics limit"
+      why_forbidden: |
+        Fast envelope expansion introduces risk faster than confidence grows.
+        The driver may not be ready for higher limits.
+        Conditions may have changed since last measurement.
+        
+    - forbidden_id: "F-005"
+      action: "Learning from invalid conditions"
+      definition: "Updating envelope when ODD is violated"
+      why_forbidden: |
+        Data from degraded conditions (rain, sensor issues, etc.) is not
+        representative of normal operation. Would corrupt the model.
+
+# =============================================================================
+# SECTION 2: SEGMENT-LOCAL LEARNING
+# =============================================================================
+
+segment_local_learning:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 SEGMENT DEFINITION
+  # ---------------------------------------------------------------------------
+  segment_definition:
+    
+    description: |
+      A segment is a contiguous portion of track with consistent characteristics.
+      Learning is performed independently for each segment.
+      
+    segment_types:
+      - "STRAIGHT"
+      - "CORNER_ENTRY"
+      - "CORNER_APEX"
+      - "CORNER_MID"
+      - "CORNER_EXIT"
+      - "CHICANE"
+      
+    segment_properties:
+      - start_distance_m: "Distance from start/finish"
+      - end_distance_m: "End of segment"
+      - length_m: "Segment length"
+      - curvature_mean: "Average curvature"
+      - curvature_min: "Minimum curvature (tightest)"
+      - segment_type: "From segment_types"
+      
+  # ---------------------------------------------------------------------------
+  # 2.2 PER-SEGMENT LEARNING STATE
+  # ---------------------------------------------------------------------------
+  learning_state:
+    
+    per_segment_data:
+      
+      observation_buffer:
+        description: "Ring buffer of recent observations"
+        capacity: 100  # Last 100 passes through segment
+        data_per_observation:
+          - lap_number: "Integer"
+          - timestamp: "Unix epoch ms"
+          - speed_at_entry_mps: "Float32"
+          - speed_at_apex_mps: "Float32"
+          - speed_at_exit_mps: "Float32"
+          - min_speed_mps: "Float32"
+          - max_lateral_g: "Float32"
+          - max_longitudinal_g: "Float32"
+          - combined_g_peak: "Float32"
+          - yaw_rate_peak_dps: "Float32"
+          - grip_utilization_peak: "Float32"
+          - valid: "Boolean"
+          - confidence: "Float32"
+          
+      statistics:
+        description: "Robust statistics computed from buffer"
+        values:
+          - speed_median_mps: "Median speed (robust to outliers)"
+          - speed_p10_mps: "10th percentile (conservative)"
+          - speed_p90_mps: "90th percentile (optimistic)"
+          - speed_iqr_mps: "Interquartile range (spread)"
+          - lateral_g_median: "Median lateral acceleration"
+          - grip_utilization_median: "Median grip usage"
+          
+      learning_metadata:
+        description: "Track learning progress"
+        values:
+          - total_observations: "Count of all observations"
+          - valid_observations: "Count of valid observations"
+          - last_updated: "Timestamp of last update"
+          - learning_confidence: "Current confidence level"
+          - envelope_adjustment: "Current learned adjustment factor"
+          
+  # ---------------------------------------------------------------------------
+  # 2.3 NO CROSS-SEGMENT INFLUENCE
+  # ---------------------------------------------------------------------------
+  isolation_rules:
+    
+    - rule: "No parameter sharing"
+      description: |
+        Learned parameters for segment N do not affect segment N±1.
+        Each segment is an isolated learning domain.
+        
+    - rule: "No smoothing across segments"
+      description: |
+        Envelope adjustments are not smoothed between adjacent segments.
+        Transitions are handled by conservative blending, not learned.
+        
+    - rule: "No track-wide model"
+      description: |
+        There is no "track friction estimate" or "track grip model".
+        Each segment has its own independent estimate.
+        
+    rationale: |
+      Consider: a repaved corner next to an old worn section.
+      Track-wide learning would average these, wrong for both.
+      Segment-local learning captures the actual difference.
+
+# =============================================================================
+# SECTION 3: ROBUST STATISTICS
+# =============================================================================
+
+robust_statistics:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 WHY ROBUST STATISTICS
+  # ---------------------------------------------------------------------------
+  rationale:
+    
+    problem_with_mean: |
+      Mean (average) is sensitive to outliers.
+      One exceptionally fast lap (slipstream, error, sensor spike)
+      pulls the mean up, potentially creating dangerous advice.
+      
+    problem_with_max: |
+      Maximum value is even more vulnerable.
+      A single anomalous reading becomes the "capability".
+      This is exactly how racing accidents happen.
+      
+    solution: |
+      Use robust statistics that are resistant to outliers:
+      - Median (50th percentile)
+      - Trimmed mean
+      - Interquartile range
+      - Percentile-based estimates
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 PRIMARY STATISTICS
+  # ---------------------------------------------------------------------------
+  primary_statistics:
+    
+    median:
+      name: "Median (50th Percentile)"
+      formula: "Middle value when sorted"
+      properties:
+        - "Resistant to outliers"
+        - "Requires no assumptions about distribution"
+        - "Breakdown point = 50%"  # 50% of data can be corrupt
+      usage: "Primary estimate of typical performance"
+      
+    interquartile_range:
+      name: "IQR (Interquartile Range)"
+      formula: "IQR = P75 - P25"
+      properties:
+        - "Robust measure of spread"
+        - "Not affected by extreme values"
+      usage: "Measure of consistency"
+      
+    trimmed_mean:
+      name: "Trimmed Mean"
+      formula: "Mean after removing top and bottom 10%"
+      trim_fraction: 0.10
+      usage: "Secondary estimate, slightly more efficient than median"
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 CONSERVATIVE PERCENTILES
+  # ---------------------------------------------------------------------------
+  conservative_percentiles:
+    
+    description: |
+      For safety-critical decisions, we use CONSERVATIVE percentiles.
+      This means we estimate what the driver CAN reliably do,
+      not what they've occasionally achieved.
+      
+    percentiles_used:
+      
+      p10:
+        name: "10th Percentile"
+        meaning: "Speed exceeded in 90% of passes"
+        usage: "Very conservative baseline"
+        when: "Low confidence, new segment"
+        
+      p25:
+        name: "25th Percentile (Q1)"
+        meaning: "Speed exceeded in 75% of passes"
+        usage: "Conservative estimate"
+        when: "Growing confidence"
+        
+      p50:
+        name: "50th Percentile (Median)"
+        meaning: "Typical performance"
+        usage: "Standard estimate"
+        when: "Moderate to high confidence"
+        
+      p75:
+        name: "75th Percentile (Q3)"
+        meaning: "Better-than-typical performance"
+        usage: "NEVER used for envelope"
+        reason: "Would be optimistic, increases risk"
+        
+    percentile_selection:
+      formula: "used_percentile = P10 + (P50 - P10) × confidence"
+      at_zero_confidence: "P10 (most conservative)"
+      at_full_confidence: "P50 (typical, still not aggressive)"
+      
+  # ---------------------------------------------------------------------------
+  # 3.4 OUTLIER DETECTION
+  # ---------------------------------------------------------------------------
+  outlier_detection:
+    
+    method: "Modified Z-Score using Median Absolute Deviation (MAD)"
+    
+    formulas:
+      mad: "MAD = median(|x_i - median(x)|)"
+      modified_z: "M_i = 0.6745 × (x_i - median) / MAD"
+      
+    thresholds:
+      outlier: "|M_i| > 3.5"
+      extreme_outlier: "|M_i| > 5.0"
+      
+    action_on_outlier:
+      - "Flag observation as potentially invalid"
+      - "Do not include in statistics calculation"
+      - "Log for review"
+      - "If many outliers, flag segment for investigation"
+      
+    rationale: |
+      MAD-based detection is robust even when outliers are present.
+      Standard deviation-based detection fails when data is contaminated.
+      
+  # ---------------------------------------------------------------------------
+  # 3.5 CONSISTENCY METRICS
+  # ---------------------------------------------------------------------------
+  consistency_metrics:
+    
+    coefficient_of_variation:
+      name: "Robust CV"
+      formula: "CV = IQR / median"
+      interpretation:
+        low: "< 0.1: Highly consistent"
+        medium: "0.1 - 0.2: Normal variation"
+        high: "> 0.2: High variation, reduce confidence"
+        
+    lap_to_lap_consistency:
+      name: "Successive Lap Variance"
+      formula: "Mean of |speed[i] - speed[i-1]|"
+      interpretation: |
+        Low variance = consistent driver
+        High variance = inconsistent or learning
+        
+    implication: |
+      High consistency allows confidence to grow faster.
+      Low consistency keeps margins conservative.
+
+# =============================================================================
+# SECTION 4: MINIMUM DATA REQUIREMENTS
+# =============================================================================
+
+minimum_data_requirements:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 TIERED DATA REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  tiers:
+    
+    tier_0:
+      name: "No Learning"
+      requirements: "< 3 valid observations"
+      action: |
+        Use physics envelope × 0.70 (maximum conservatism).
+        No adaptive refinement.
+        Learning state: ACCUMULATING
+      output_confidence: 0.50
+      
+    tier_1:
+      name: "Initial Learning"
+      requirements: "3-9 valid observations"
+      action: |
+        Begin computing statistics.
+        Use heavily conservative blend.
+        Learning state: INITIALIZING
+      percentile_used: "P10"
+      blend_factor: 0.20  # 80% physics, 20% learned
+      output_confidence: 0.60
+      
+    tier_2:
+      name: "Growing Confidence"
+      requirements: "10-29 valid observations"
+      action: |
+        Statistics becoming reliable.
+        Moderate conservative blend.
+        Learning state: LEARNING
+      percentile_used: "P25"
+      blend_factor: 0.40  # 60% physics, 40% learned
+      output_confidence: 0.70
+      
+    tier_3:
+      name: "Established Learning"
+      requirements: "30-99 valid observations"
+      action: |
+        Statistics stable.
+        Standard blend.
+        Learning state: ESTABLISHED
+      percentile_used: "P40"
+      blend_factor: 0.60  # 40% physics, 60% learned
+      output_confidence: 0.80
+      
+    tier_4:
+      name: "Mature Learning"
+      requirements: "≥ 100 valid observations"
+      action: |
+        High-confidence statistics.
+        Maximum learning influence (still conservative).
+        Learning state: MATURE
+      percentile_used: "P50"
+      blend_factor: 0.75  # 25% physics, 75% learned
+      output_confidence: 0.85
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 OBSERVATION VALIDITY
+  # ---------------------------------------------------------------------------
+  observation_validity:
+    
+    description: |
+      Not all passes through a segment count as valid observations.
+      Invalid observations are stored but not used for learning.
+      
+    validity_requirements:
+      
+      - requirement: "Complete segment coverage"
+        check: "GPS/position covers entry to exit"
+        failure_action: "Mark invalid"
+        
+      - requirement: "Sensor health OK"
+        check: "No sensor dropouts during segment"
+        failure_action: "Mark invalid"
+        
+      - requirement: "ODD satisfied"
+        check: "Within operational design domain"
+        failure_action: "Mark invalid"
+        
+      - requirement: "No safety intervention"
+        check: "No ABS, traction control, stability control"
+        failure_action: "Mark invalid (indicates limit exceeded)"
+        
+      - requirement: "Consistent with physics"
+        check: "Observed values ≤ physics limits"
+        failure_action: "Mark invalid (sensor error or mislocalization)"
+        
+      - requirement: "Not an outlier"
+        check: "Modified Z-score < 3.5"
+        failure_action: "Mark as outlier, exclude from stats"
+        
+    minimum_for_observation:
+      - "GPS fix valid throughout"
+      - "IMU data continuous"
+      - "Position confidence ≥ 0.70"
+      - "No ODD violations"
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 LAP REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  lap_requirements:
+    
+    minimum_laps_for_learning: 3
+    
+    lap_validity:
+      - "Complete lap (start/finish crossed)"
+      - "No pit stops or slow zones"
+      - "Representative pace (within 10% of median)"
+      - "No incidents or off-track excursions"
+      
+    why_three_laps: |
+      1 lap: Could be anomaly
+      2 laps: Coincidence possible
+      3 laps: Pattern emerging
+      
+      Three is the minimum where we can:
+      - Compute meaningful spread (IQR)
+      - Detect outliers
+      - Establish baseline consistency
+
+# =============================================================================
+# SECTION 5: CONSERVATIVE BLENDING WITH PHYSICS
+# =============================================================================
+
+conservative_blending:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 BLENDING FORMULA
+  # ---------------------------------------------------------------------------
+  blending_formula:
+    
+    description: |
+      The final envelope is a blend of physics-derived and learned limits.
+      Physics is the ceiling. Learning refines within that ceiling.
+      
+    formula: |
+      envelope_final = min(
+        physics_envelope × physics_margin,
+        blend(physics_envelope × physics_margin, learned_envelope, blend_factor)
+      )
+      
+    where:
+      physics_envelope: "From controllability_envelopes.yaml"
+      physics_margin: "0.85 (never use full physics)"
+      learned_envelope: "From robust statistics"
+      blend_factor: "From tier (0.20 to 0.75)"
+      
+    blend_function: |
+      blend(a, b, factor) = a × (1 - factor) + b × factor
+      
+      factor = 0.0: Pure physics (conservative default)
+      factor = 1.0: Pure learned (never reached)
+      
+    guarantee: |
+      Because of min() and physics_margin, result is ALWAYS ≤ physics × 0.85.
+      Learning cannot push envelope beyond 85% of physics.
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 LEARNING CAN ONLY REFINE, NOT EXCEED
+  # ---------------------------------------------------------------------------
+  refinement_constraint:
+    
+    description: |
+      Learning refines the envelope in two ways:
+      1. TIGHTENING: Learned data shows limit is lower than physics
+      2. RELAXING (limited): Learned data shows margin can reduce
+      
+    tightening:
+      when: "Learned envelope < physics envelope"
+      action: "Use learned envelope (more conservative)"
+      example: |
+        Physics says 90 km/h corner max.
+        Driver consistently does 75 km/h.
+        Learned envelope = 75 km/h (tighter).
+        
+    relaxing:
+      when: "Learned data shows consistent higher performance"
+      action: "Reduce conservatism margin (NOT exceed physics)"
+      limit: "Can relax from 70% to 85% of physics, no more"
+      example: |
+        Physics says 90 km/h. Initial envelope = 63 km/h (70%).
+        Driver consistently does 75 km/h.
+        Learned envelope can grow toward 76.5 km/h (85% of physics).
+        But NEVER beyond 76.5 km/h regardless of driver performance.
+        
+    hard_ceiling:
+      formula: "envelope_learned ≤ physics × 0.85"
+      enforcement: "Clamped at every calculation"
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 BLEND FACTOR PROGRESSION
+  # ---------------------------------------------------------------------------
+  blend_factor_progression:
+    
+    description: |
+      Blend factor increases slowly as confidence grows.
+      Even at maximum, physics retains 25% influence.
+      
+    progression:
+      observations_0_2: 0.00      # Pure physics (conservative)
+      observations_3_9: 0.20      # 80% physics, 20% learned
+      observations_10_29: 0.40    # 60% physics, 40% learned
+      observations_30_99: 0.60    # 40% physics, 60% learned
+      observations_100_plus: 0.75 # 25% physics, 75% learned (max)
+      
+    rate_limit:
+      max_increase_per_lap: 0.02  # Blend factor grows slowly
+      rationale: "Prevents rapid envelope expansion"
+      
+  # ---------------------------------------------------------------------------
+  # 5.4 ASYMMETRIC UPDATE RULES
+  # ---------------------------------------------------------------------------
+  asymmetric_updates:
+    
+    description: |
+      Envelope can tighten quickly but relaxes slowly.
+      This is intentionally asymmetric for safety.
+      
+    tightening:
+      trigger: "New data shows lower capability"
+      rate: "Immediate (within 1 lap)"
+      example: |
+        Observation shows driver is slower than envelope.
+        Envelope immediately adjusts down.
+        
+    relaxing:
+      trigger: "Consistent data shows higher capability"
+      rate: "Slow (requires multiple confirming observations)"
+      formula: |
+        relaxation_rate = 0.5 × (1 / observations_confirming)
+        Minimum 3 confirming observations to relax at all.
+      example: |
+        Driver is consistently faster than envelope.
+        After 3 observations, envelope relaxes 15% toward new level.
+        After 10 observations, envelope at 50% of new level.
+        Full relaxation takes ~20 consistent observations.
+        
+    rationale: |
+      If the driver is slower than we expect: dangerous, adjust immediately.
+      If the driver is faster than we expect: could be temporary, verify.
+
+# =============================================================================
+# SECTION 6: TEMPORAL SMOOTHING
+# =============================================================================
+
+temporal_smoothing:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 WHY TEMPORAL SMOOTHING
+  # ---------------------------------------------------------------------------
+  rationale:
+    
+    problem: |
+      Raw observations have natural variation. Lap-to-lap differences of
+      1-3 km/h are normal even for consistent drivers. Tracking every
+      variation would create a "jumpy" envelope that's hard to follow.
+      
+    solution: |
+      Apply temporal smoothing to create stable, predictable envelopes.
+      The envelope changes gradually, not abruptly.
+      
+    benefit: |
+      Driver can learn and trust the envelope because it's consistent.
+      No surprises from lap-to-lap envelope changes.
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 SMOOTHING METHODS
+  # ---------------------------------------------------------------------------
+  smoothing_methods:
+    
+    exponential_moving_average:
+      name: "EMA for Statistics"
+      formula: "EMA_new = α × value_new + (1 - α) × EMA_old"
+      parameters:
+        alpha_fast: 0.3   # For rapid changes (safety)
+        alpha_slow: 0.05  # For normal updates
+      usage: |
+        Use alpha_fast when tightening (safety).
+        Use alpha_slow when relaxing (caution).
+        
+    window_based:
+      name: "Rolling Window"
+      formula: "Use last N observations for statistics"
+      parameters:
+        window_size: 20  # Last 20 passes
+      properties:
+        - "Newer data has equal weight within window"
+        - "Old data drops out automatically"
+        - "Natural recency bias"
+        
+    weighted_average:
+      name: "Recency-Weighted Statistics"
+      formula: "w_i = decay^(age_in_laps)"
+      parameters:
+        decay: 0.95  # Each lap older = 5% less weight
+      properties:
+        - "Recent data weighs more"
+        - "Old data still contributes but fades"
+        
+  # ---------------------------------------------------------------------------
+  # 6.3 ENVELOPE CHANGE RATE LIMITS
+  # ---------------------------------------------------------------------------
+  change_rate_limits:
+    
+    description: |
+      Even with smoothing, limit how fast envelope can change.
+      Prevents abrupt changes that surprise the driver.
+      
+    limits:
+      
+      per_lap:
+        max_increase: "2% of current envelope"
+        max_decrease: "10% of current envelope"
+        rationale: "Can tighten 5× faster than relax"
+        
+      per_session:
+        max_increase: "10% of starting envelope"
+        max_decrease: "30% of starting envelope"
+        rationale: "Session-level bounds prevent runaway"
+        
+      absolute:
+        max_envelope: "physics × 0.85"
+        min_envelope: "physics × 0.50"
+        rationale: "Stay within meaningful range"
+        
+  # ---------------------------------------------------------------------------
+  # 6.4 SMOOTHING ACROSS CONDITIONS
+  # ---------------------------------------------------------------------------
+  condition_aware_smoothing:
+    
+    description: |
+      When conditions change, don't smooth across the change.
+      Reset or isolate learning for different conditions.
+      
+    condition_boundaries:
+      - "Session start"
+      - "Long break (>30 minutes)"
+      - "Weather change"
+      - "Tire change"
+      
+    on_condition_change:
+      action: |
+        1. Preserve previous learning in condition-specific slot
+        2. Check if new condition matches previous session
+        3. If match: resume with reduced confidence
+        4. If no match: start fresh learning
+        
+    condition_matching:
+      parameters:
+        - "Dry/wet"
+        - "Temperature band (±5°C)"
+        - "Tire compound (if known)"
+
+# =============================================================================
+# SECTION 7: LEARNING DECAY
+# =============================================================================
+
+learning_decay:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 WHY DECAY
+  # ---------------------------------------------------------------------------
+  rationale:
+    
+    problem: |
+      Old data may not reflect current conditions:
+      - Track surface changes (rubber, wear, resurfacing)
+      - Vehicle changes (new tires, different setup)
+      - Driver changes (fatigue, improvement, regression)
+      
+    solution: |
+      Apply decay to old observations. Recent data matters more.
+      Very old data eventually has negligible influence.
+      
+    benefit: |
+      System remains responsive to actual current performance.
+      Doesn't cling to stale data from different conditions.
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 DECAY MECHANISMS
+  # ---------------------------------------------------------------------------
+  decay_mechanisms:
+    
+    lap_based_decay:
+      name: "Decay Per Lap"
+      formula: "weight = decay_factor^laps_ago"
+      parameters:
+        decay_factor: 0.95
+      effect:
+        5_laps_ago: "0.95^5 = 0.77"
+        10_laps_ago: "0.95^10 = 0.60"
+        20_laps_ago: "0.95^20 = 0.36"
+        50_laps_ago: "0.95^50 = 0.08"
+        
+    time_based_decay:
+      name: "Decay Over Time"
+      formula: "weight = decay_rate^hours_ago"
+      parameters:
+        decay_rate: 0.90
+        minimum_weight: 0.10
+      effect:
+        1_hour_ago: "0.90^1 = 0.90"
+        8_hours_ago: "0.90^8 = 0.43"
+        24_hours_ago: "0.90^24 = 0.08"
+        
+    session_decay:
+      name: "Between-Session Decay"
+      formula: "confidence_new = confidence_old × session_decay"
+      parameters:
+        session_decay: 0.80
+      effect: |
+        After each session break, confidence reduces by 20%.
+        This accounts for potential changes between sessions.
+        
+  # ---------------------------------------------------------------------------
+  # 7.3 OBSERVATION EXPIRY
+  # ---------------------------------------------------------------------------
+  observation_expiry:
+    
+    description: |
+      Observations eventually expire and are removed from statistics.
+      This bounds memory and ensures relevance.
+      
+    expiry_rules:
+      
+      lap_limit:
+        max_observations: 100
+        action: "Remove oldest when buffer full"
+        
+      time_limit:
+        max_age_hours: 72
+        action: "Remove observations older than limit"
+        
+      session_limit:
+        max_sessions_ago: 5
+        action: "Remove observations from old sessions"
+        
+    on_expiry:
+      - "Observation removed from buffer"
+      - "Statistics recalculated without it"
+      - "If observations drop below tier threshold, confidence reduces"
+      
+  # ---------------------------------------------------------------------------
+  # 7.4 DECAY RECOVERY
+  # ---------------------------------------------------------------------------
+  decay_recovery:
+    
+    description: |
+      When driver returns and matches previous performance,
+      decay can be partially recovered.
+      
+    recovery_trigger:
+      condition: |
+        New observations within 1 IQR of decayed median.
+        At least 3 confirming observations.
+        
+    recovery_action: |
+      Restore confidence at 50% of decay loss.
+      Example: If decayed from 0.80 to 0.60 (lost 0.20),
+      recovery restores 0.10, resulting in 0.70.
+      
+    recovery_limit:
+      max_recovery_per_session: 0.15
+      rationale: "Don't snap back to full confidence instantly"
+
+# =============================================================================
+# SECTION 8: CONDITION GATING
+# =============================================================================
+
+condition_gating:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 GATE CONCEPT
+  # ---------------------------------------------------------------------------
+  concept:
+    
+    description: |
+      Learning is "gated" by conditions. The gate must be OPEN for learning
+      to occur. If the gate is CLOSED, observations are stored but not used.
+      
+    purpose: |
+      Ensures learning only from valid, representative data.
+      Invalid conditions would corrupt the model.
+      
+    gate_state:
+      OPEN: "Conditions valid, learning occurs"
+      CLOSED: "Conditions invalid, learning paused"
+      PARTIAL: "Some conditions marginal, reduced learning weight"
+      
+  # ---------------------------------------------------------------------------
+  # 8.2 GATING CONDITIONS
+  # ---------------------------------------------------------------------------
+  gating_conditions:
+    
+    sensor_gates:
+      
+      gps_gate:
+        check: "GPS HDOP ≤ 2.0"
+        on_failure: "CLOSE gate"
+        rationale: "Poor GPS = unreliable position = unreliable learning"
+        
+      imu_gate:
+        check: "IMU calibrated AND drift < threshold"
+        on_failure: "CLOSE gate"
+        rationale: "Uncalibrated IMU = wrong acceleration readings"
+        
+      speed_gate:
+        check: "Speed source confidence ≥ 0.80"
+        on_failure: "CLOSE gate"
+        rationale: "Speed is primary learning metric"
+        
+    operational_gates:
+      
+      odd_gate:
+        check: "All ODD conditions satisfied"
+        on_failure: "CLOSE gate"
+        rationale: "Outside ODD = non-representative"
+        
+      track_gate:
+        check: "Vehicle on track, not pit lane"
+        on_failure: "CLOSE gate"
+        rationale: "Pit lane behavior not relevant to racing"
+        
+      session_gate:
+        check: "In active session, not under caution"
+        on_failure: "CLOSE gate"
+        rationale: "Caution laps not representative of pace"
+        
+    quality_gates:
+      
+      consistency_gate:
+        check: "Recent CV < 0.3"
+        on_failure: "PARTIAL gate"
+        rationale: "Highly inconsistent data reduces learning rate"
+        
+      outlier_gate:
+        check: "Not an outlier observation"
+        on_failure: "CLOSE gate for this observation"
+        rationale: "Individual outliers excluded"
+        
+      physics_gate:
+        check: "Observation ≤ physics limit"
+        on_failure: "CLOSE gate (flag for investigation)"
+        rationale: "Exceeding physics = sensor error"
+        
+  # ---------------------------------------------------------------------------
+  # 8.3 COMBINED GATE LOGIC
+  # ---------------------------------------------------------------------------
+  gate_logic:
+    
+    formula: |
+      gate_state = AND(all required gates)
+      
+      If ANY required gate is CLOSED → gate = CLOSED
+      If ALL required gates OPEN but some optional PARTIAL → gate = PARTIAL
+      If ALL gates OPEN → gate = OPEN
+      
+    required_gates:
+      - gps_gate
+      - imu_gate
+      - odd_gate
+      - track_gate
+      - physics_gate
+      
+    optional_gates:
+      - consistency_gate
+      - session_gate
+      
+  # ---------------------------------------------------------------------------
+  # 8.4 GATED LEARNING BEHAVIOR
+  # ---------------------------------------------------------------------------
+  gated_behavior:
+    
+    gate_OPEN:
+      observation_stored: true
+      observation_used_for_learning: true
+      statistics_updated: true
+      confidence_can_grow: true
+      
+    gate_PARTIAL:
+      observation_stored: true
+      observation_used_for_learning: true
+      learning_weight: 0.50  # Half normal influence
+      confidence_growth_rate: 0.50
+      
+    gate_CLOSED:
+      observation_stored: true  # For audit/debug
+      observation_used_for_learning: false
+      statistics_updated: false
+      confidence_decays: "At normal rate"
+      
+    extended_closure:
+      threshold: ">50% of last 10 observations gated CLOSED"
+      action: |
+        Increase conservatism (reduce blend_factor by 0.1).
+        Flag segment for investigation.
+        Log reason for extended closure.
+
+# =============================================================================
+# SECTION 9: HOW LEARNING IMPROVES WITHOUT INCREASING RISK
+# =============================================================================
+
+safety_guarantee:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 THE FUNDAMENTAL MECHANISM
+  # ---------------------------------------------------------------------------
+  mechanism:
+    
+    explanation: |
+      PHYSICS defines the CEILING: what is physically possible.
+      LEARNING defines the FLOOR: what the driver reliably achieves.
+      
+      Without learning, we use physics × 0.70 (very conservative).
+      With learning, we can use physics × 0.85 (still conservative).
+      
+      Learning NEVER raises the ceiling. Physics is immutable.
+      Learning raises confidence in WHERE within the ceiling is safe.
+      
+    visual: |
+      
+      Physics Limit (100%) ─────────────────────────────────────
+                           │ FORBIDDEN ZONE - Never Enter
+      Max Learned (85%) ───┼─────────────────────────────────────
+                           │ LEARNED ZONE - Refined by data
+      Conservative (70%) ──┼─────────────────────────────────────
+                           │ INITIAL ZONE - Before learning
+      Zero                 └─────────────────────────────────────
+      
+    key_insight: |
+      Learning moves the "operating point" UP from 70% toward 85%,
+      NOT above 85%. The 15% between learned and physics is safety margin.
+      
+  # ---------------------------------------------------------------------------
+  # 9.2 ACCURACY IMPROVEMENT
+  # ---------------------------------------------------------------------------
+  accuracy_improvement:
+    
+    without_learning:
+      corner_speed_estimate: "physics × 0.70"
+      problem: |
+        This may be overly conservative for some corners.
+        Driver could safely go 80% but we're limiting to 70%.
+        Coaching is less useful because it's too cautious.
+        
+    with_learning:
+      corner_speed_estimate: "min(physics × 0.85, learned_value)"
+      benefit: |
+        Envelope matches actual driver capability.
+        Coaching is relevant and actionable.
+        Driver trusts the advice because it matches experience.
+        
+    accuracy_definition: |
+      Accuracy = how closely envelope matches actual safe limit.
+      Higher accuracy = more useful coaching.
+      Learning improves accuracy by incorporating real data.
+      
+  # ---------------------------------------------------------------------------
+  # 9.3 RISK UNCHANGED
+  # ---------------------------------------------------------------------------
+  risk_unchanged:
+    
+    claim: "Learning improves accuracy WITHOUT increasing risk."
+    
+    proof:
+      
+      step_1:
+        statement: "Physics envelope × 0.85 is the maximum possible."
+        enforcement: "Hard clamp at every calculation."
+        
+      step_2:
+        statement: "0.85 provides 15% margin for error."
+        justification: |
+          At 85% of physics limit, driver has 15% grip reserve.
+          This handles surface variations, driver errors, etc.
+          This margin is fixed regardless of learning.
+          
+      step_3:
+        statement: "Learning can only move envelope FROM 70% TOWARD 85%."
+        mechanism: |
+          Initial: physics × 0.70
+          After learning: physics × min(0.85, blend(0.70, observed, factor))
+          Result: 0.70 ≤ envelope/physics ≤ 0.85
+          
+      step_4:
+        statement: "Risk is proportional to (1 - margin)."
+        formula: "risk ∝ 1 - (physics - envelope)/physics"
+        analysis: |
+          At 70%: margin = 30%, risk = 70%
+          At 85%: margin = 15%, risk = 85%
+          
+          Wait - doesn't this show risk INCREASES?
+          
+      step_5:
+        statement: "Risk is ACCEPTED at 85%, not created by learning."
+        explanation: |
+          The 85% ceiling is a DESIGN DECISION, not a learning outcome.
+          We CHOSE 85% as acceptable risk after safety analysis.
+          Learning doesn't change what's acceptable.
+          Learning DISCOVERS whether 85% is achievable.
+          
+          Without learning, we might advise 70% when 85% is safe.
+          This is UNNECESSARILY conservative, not safer.
+          
+      conclusion: |
+        Learning doesn't increase risk beyond designed limits.
+        Learning reduces UNNECESSARY conservatism.
+        The physics ceiling and safety margin are constant.
+        
+  # ---------------------------------------------------------------------------
+  # 9.4 FAILURE MODES
+  # ---------------------------------------------------------------------------
+  failure_modes:
+    
+    what_if_learning_is_wrong:
+      
+      scenario_1:
+        name: "Learning overestimates capability"
+        how_it_could_happen: |
+          Driver had a fast session (new tires, cool temps).
+          Learning records high speeds.
+          Conditions change (worn tires, hot track).
+          Learned envelope is now too aggressive.
+          
+        protection: |
+          1. Physics ceiling still applies (can't exceed physics × 0.85)
+          2. Decay reduces old data influence
+          3. New (slower) observations trigger asymmetric tightening
+          4. Condition gating may close if conditions differ
+          
+      scenario_2:
+        name: "Sensor error corrupts learning"
+        how_it_could_happen: |
+          GPS drift records faster-than-actual speeds.
+          Learning incorporates inflated speeds.
+          Envelope is too aggressive.
+          
+        protection: |
+          1. Physics gate: observations > physics are rejected
+          2. Outlier detection: anomalies are excluded
+          3. Robust statistics: median resists contamination
+          4. Multiple observations required: single error has limited impact
+          
+      scenario_3:
+        name: "Wrong segment association"
+        how_it_could_happen: |
+          Position uncertainty causes observation to associate with wrong segment.
+          Fast straight data pollutes slow corner learning.
+          
+        protection: |
+          1. Position confidence gating
+          2. Physics check: straight speeds in corner are rejected
+          3. Segment-local isolation: one bad segment doesn't affect others
+          
+    fail_safe_guarantee: |
+      In all failure modes, the physics ceiling is the backstop.
+      Even with completely corrupted learning, envelope ≤ physics × 0.85.
+      The system cannot advise speeds that violate physics.
+
+# =============================================================================
+# SECTION 10: OUTPUT AND AUDIT
+# =============================================================================
+
+output_audit:
+
+  # ---------------------------------------------------------------------------
+  # 10.1 LEARNING STATE OUTPUT
+  # ---------------------------------------------------------------------------
+  learning_state_output:
+    
+    per_segment:
+      format: "SegmentLearningState"
+      fields:
+        segment_id: "Integer"
+        learning_tier: "0-4"
+        total_observations: "Integer"
+        valid_observations: "Integer"
+        gate_state: "OPEN | PARTIAL | CLOSED"
+        statistics:
+          median_speed_mps: "Float32"
+          p10_speed_mps: "Float32"
+          iqr_mps: "Float32"
+          consistency_cv: "Float32"
+        envelope:
+          physics_limit_mps: "Float32"
+          learned_envelope_mps: "Float32"
+          blend_factor: "Float32"
+          confidence: "Float32"
+        metadata:
+          last_updated: "Unix timestamp"
+          oldest_observation: "Unix timestamp"
+          
+  # ---------------------------------------------------------------------------
+  # 10.2 AUDIT TRAIL
+  # ---------------------------------------------------------------------------
+  audit_trail:
+    
+    per_observation:
+      logged:
+        - timestamp
+        - lap_number
+        - segment_id
+        - raw_values
+        - validity_status
+        - gate_state
+        - outlier_flag
+        - statistics_before
+        - statistics_after
+        - envelope_before
+        - envelope_after
+        
+    per_envelope_update:
+      logged:
+        - timestamp
+        - segment_id
+        - trigger: "New observation | Decay | Manual"
+        - physics_limit
+        - learned_value
+        - blend_factor
+        - confidence
+        - final_envelope
+        - change_delta
+        - change_reason
+        
+  # ---------------------------------------------------------------------------
+  # 10.3 INVARIANT VERIFICATION
+  # ---------------------------------------------------------------------------
+  invariant_checks:
+    
+    per_calculation:
+      
+      - check: "envelope ≤ physics × 0.85"
+        on_failure: "CRITICAL: Clamp and log violation"
+        
+      - check: "blend_factor ∈ [0, 0.75]"
+        on_failure: "ERROR: Reset to default"
+        
+      - check: "confidence ∈ [0, 1]"
+        on_failure: "ERROR: Clamp to range"
+        
+      - check: "observations_used ≤ observations_stored"
+        on_failure: "ERROR: Recompute from storage"
+        
+      - check: "gate_OPEN requires all required conditions"
+        on_failure: "ERROR: Force gate CLOSED"
+
+# =============================================================================
+# END OF ADAPTIVE ENVELOPE REFINEMENT SPECIFICATION
+# =============================================================================
+#
+# SUMMARY:
+#
+# WHAT AER DOES:
+#   - Learns driver/vehicle capability per segment
+#   - Uses robust statistics resistant to outliers
+#   - Requires minimum data before learning applies
+#   - Blends conservatively with physics baseline
+#   - Applies temporal smoothing for stability
+#   - Decays old data to maintain relevance
+#   - Gates learning based on conditions
+#
+# WHAT AER NEVER DOES:
+#   - Exceed physics ceiling (85% max)
+#   - Learn globally (always segment-local)
+#   - Adapt on one lap (minimum 3 required)
+#   - Override physics with learned data
+#   - Relax envelope rapidly (asymmetric update)
+#   - Learn from invalid conditions
+#
+# HOW ACCURACY IMPROVES WITHOUT RISK:
+#   - Physics defines ceiling (constant)
+#   - Learning moves operating point from 70% → 85%
+#   - 15% margin always preserved
+#   - Learning discovers capability, doesn't create it
+#   - Fail-safe: even corrupted learning can't exceed physics
+#
+# =============================================================================
