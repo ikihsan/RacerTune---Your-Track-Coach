@@ -1,0 +1,1245 @@
+# =============================================================================
+# SENSOR REALITY MODEL - REAL-WORLD BEHAVIOR AND LIMITATIONS
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: Sensors are imperfect. This document models ACTUAL
+# behavior, not idealized specifications. All values are based on empirical
+# observations of consumer-grade phone sensors in motorsport environments.
+#
+# NO ASSUMPTIONS OF PERFECTION. Every sensor lies. Trust nothing implicitly.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "SENSOR_CHARACTERIZATION"
+
+# =============================================================================
+# SECTION 1: PHONE GPS - REAL-WORLD BEHAVIOR
+# =============================================================================
+# Consumer phone GPS is fundamentally limited. This section models actual
+# behavior observed in track environments, not manufacturer specifications.
+
+phone_gps:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 TYPICAL ERROR RANGES
+  # ---------------------------------------------------------------------------
+  error_characteristics:
+    
+    # Position accuracy (CEP = Circular Error Probable, 50th percentile)
+    position:
+      # Best case: Open sky, stationary, good satellite geometry
+      best_case:
+        cep_m: 2.0
+        max_error_m: 5.0
+        conditions: "Open sky, stationary, >10 satellites, HDOP <1.5"
+        
+      # Typical track day: Moving, some obstructions
+      typical_case:
+        cep_m: 4.0
+        max_error_m: 12.0
+        conditions: "Track environment, 60-200 km/h, 6-10 satellites"
+        
+      # Degraded: Near buildings, trees, or poor geometry
+      degraded_case:
+        cep_m: 8.0
+        max_error_m: 25.0
+        conditions: "Partial obstruction, <6 satellites, HDOP >2.0"
+        
+      # Worst case: Tunnel exit, cold start, multipath
+      worst_case:
+        cep_m: 20.0
+        max_error_m: 100.0
+        conditions: "Multipath, signal reflection, satellite reacquisition"
+        
+    # Velocity accuracy
+    velocity:
+      # GPS velocity is often MORE accurate than position
+      typical_accuracy_mps: 0.3           # ±0.3 m/s typical
+      degraded_accuracy_mps: 1.0          # When HDOP degraded
+      worst_case_accuracy_mps: 3.0        # During reacquisition
+      
+      # Velocity noise characteristics
+      noise:
+        stationary_noise_mps: 0.2         # Noise when actually stationary
+        moving_noise_percent: 2           # % of actual speed
+        
+    # Heading accuracy (derived from velocity vector)
+    heading:
+      # Heading requires motion to be valid
+      minimum_speed_for_valid_heading_mps: 3.0
+      typical_accuracy_deg: 2.0           # At >30 km/h
+      low_speed_accuracy_deg: 10.0        # At 10-30 km/h
+      very_low_speed_accuracy_deg: 45.0   # At <10 km/h (unreliable)
+      
+  # ---------------------------------------------------------------------------
+  # 1.2 UPDATE RATE REALITY
+  # ---------------------------------------------------------------------------
+  update_rate:
+    
+    # Advertised vs actual
+    advertised_rates_hz: [1, 5, 10]
+    
+    # Reality: Most phones cap at 1 Hz unless using specific APIs
+    typical_reality:
+      android_standard_hz: 1              # LocationManager default
+      android_fused_hz: 5                 # FusedLocationProvider, best effort
+      android_gnss_raw_hz: 10             # GnssMeasurement API (Android 7+)
+      ios_standard_hz: 1                  # CLLocationManager default
+      ios_best_hz: 5                      # Best achievable on iOS
+      
+    # Update rate variability
+    jitter:
+      nominal_1hz_actual_range_ms: [900, 1200]
+      nominal_5hz_actual_range_ms: [150, 250]
+      nominal_10hz_actual_range_ms: [80, 150]
+      
+    # Gaps are common
+    gap_frequency:
+      probability_of_1s_gap_per_minute: 0.05    # 5% chance
+      probability_of_2s_gap_per_minute: 0.02    # 2% chance
+      probability_of_5s_gap_per_minute: 0.005   # 0.5% chance
+      
+  # ---------------------------------------------------------------------------
+  # 1.3 FAILURE MODES
+  # ---------------------------------------------------------------------------
+  failure_modes:
+    
+    # Complete signal loss
+    signal_loss:
+      causes:
+        - "Tunnel or covered pit lane"
+        - "Dense tree canopy"
+        - "Building obstruction"
+        - "Phone overheating (thermal throttling)"
+        - "Battery saver mode activated"
+        - "OS suspending location services"
+        - "Airplane mode accidentally enabled"
+        
+      detection:
+        - "No position updates for >1 second"
+        - "Satellite count drops to 0"
+        - "Fix type becomes NONE"
+        
+      typical_duration_s: 2-30
+      recovery_time_cold_s: 30-120        # Cold start after long loss
+      recovery_time_warm_s: 2-10          # Warm start, brief loss
+      
+    # Multipath errors (signal reflection)
+    multipath:
+      causes:
+        - "Buildings alongside track"
+        - "Metal grandstands"
+        - "Bridges/overpasses"
+        - "Pit lane garages"
+        - "Armco barriers (reflection)"
+        
+      symptoms:
+        - "Position jumps laterally 5-50m"
+        - "Track position appears off-track"
+        - "Sudden velocity spikes"
+        - "HDOP fluctuations"
+        
+      detection:
+        - "Position change > physics allows"
+        - "Position outside track boundaries"
+        - "Velocity disagrees with IMU by >2 m/s"
+        
+      duration_s: 0.5-5
+      
+    # Cold start / TTFF issues
+    cold_start:
+      time_to_first_fix:
+        best_case_s: 5
+        typical_s: 30
+        worst_case_s: 120
+        assisted_gps_s: 2-5               # With network assistance
+        
+      accuracy_during_convergence:
+        initial_cep_m: 50
+        after_30s_cep_m: 10
+        converged_cep_m: 4
+        
+    # Position drift (slow error accumulation)
+    drift:
+      causes:
+        - "Atmospheric conditions changing"
+        - "Satellite geometry degrading"
+        - "Ionospheric disturbances"
+        - "Phone getting warm"
+        
+      typical_drift_rate_m_per_minute: 0.5
+      maximum_drift_rate_m_per_minute: 2.0
+      
+    # Altitude errors (vertical accuracy is poor)
+    altitude:
+      typical_error_m: 10-30
+      can_be_negative: true               # Phone reports below ground
+      use_for_physics: false              # Do NOT trust altitude
+      
+  # ---------------------------------------------------------------------------
+  # 1.4 DETECTION STRATEGIES
+  # ---------------------------------------------------------------------------
+  detection_strategies:
+    
+    # Real-time quality assessment
+    quality_indicators:
+      - name: "hdop"
+        good: "<1.5"
+        acceptable: "1.5-2.0"
+        degraded: "2.0-2.5"
+        unacceptable: ">2.5"
+        action_on_unacceptable: "REDUCE_CONFIDENCE"
+        
+      - name: "satellite_count"
+        good: ">=10"
+        acceptable: "6-9"
+        degraded: "4-5"
+        unacceptable: "<4"
+        action_on_unacceptable: "DEGRADE_TO_IMU"
+        
+      - name: "fix_type"
+        valid: ["3D", "RTK_FIXED", "RTK_FLOAT"]
+        degraded: ["2D"]
+        invalid: ["NONE", "NO_FIX"]
+        action_on_invalid: "GPS_UNAVAILABLE"
+        
+      - name: "accuracy_estimate"
+        description: "Phone's self-reported accuracy"
+        trust_level: "LOW"                # Phones often underestimate error
+        multiply_by: 1.5                  # Apply safety factor
+        
+    # Physics-based validation
+    physics_validation:
+      
+      - check: "position_change_rate"
+        description: "Did position change faster than vehicle can move?"
+        formula: "distance(pos_n, pos_n-1) / delta_t"
+        max_valid_mps: 120                # ~430 km/h absolute max
+        action_on_violation: "REJECT_SAMPLE"
+        
+      - check: "acceleration_implied"
+        description: "Does velocity change imply impossible acceleration?"
+        formula: "(vel_n - vel_n-1) / delta_t"
+        max_valid_g: 5                    # No car does 5g
+        action_on_violation: "REJECT_SAMPLE"
+        
+      - check: "track_boundary"
+        description: "Is position on or near the track?"
+        max_distance_from_centerline_m: 50
+        action_on_violation: "FLAG_SUSPECT"
+        
+    # IMU cross-validation
+    imu_crosscheck:
+      
+      - check: "velocity_agreement"
+        description: "GPS velocity vs IMU-integrated velocity"
+        max_disagreement_mps: 2.0
+        action_on_violation: "USE_LOWER_ESTIMATE"
+        
+      - check: "heading_agreement"
+        description: "GPS heading vs IMU gyro-integrated heading"
+        max_disagreement_deg: 15
+        at_speed_above_kmh: 30
+        action_on_violation: "USE_IMU_HEADING"
+        
+  # ---------------------------------------------------------------------------
+  # 1.5 CONFIDENCE SCORING
+  # ---------------------------------------------------------------------------
+  confidence_scoring:
+    
+    # Base confidence starts at 1.0, multiplied by factors
+    base_confidence: 1.0
+    
+    # Multiplicative factors (multiply together)
+    factors:
+      
+      - factor: "hdop_factor"
+        values:
+          hdop_1_0: 1.00
+          hdop_1_5: 0.95
+          hdop_2_0: 0.85
+          hdop_2_5: 0.70
+          hdop_3_0: 0.50
+          hdop_above_3: 0.30
+          
+      - factor: "satellite_factor"
+        values:
+          satellites_12_plus: 1.00
+          satellites_10_11: 0.95
+          satellites_8_9: 0.90
+          satellites_6_7: 0.80
+          satellites_4_5: 0.60
+          satellites_below_4: 0.30
+          
+      - factor: "update_age_factor"
+        values:
+          age_under_200ms: 1.00
+          age_200_500ms: 0.95
+          age_500_1000ms: 0.85
+          age_1000_2000ms: 0.70
+          age_2000_5000ms: 0.50
+          age_above_5000ms: 0.20
+          
+      - factor: "physics_validation_factor"
+        values:
+          all_checks_pass: 1.00
+          minor_violation: 0.80
+          major_violation: 0.50
+          critical_violation: 0.20
+          
+      - factor: "imu_agreement_factor"
+        values:
+          strong_agreement: 1.00
+          moderate_agreement: 0.90
+          weak_agreement: 0.75
+          disagreement: 0.50
+          strong_disagreement: 0.30
+          
+    # Minimum confidence to use GPS
+    minimum_usable_confidence: 0.50
+    
+    # Confidence threshold for voice output
+    voice_threshold: 0.85
+
+# =============================================================================
+# SECTION 2: PHONE IMU - REAL-WORLD BEHAVIOR
+# =============================================================================
+# Phone IMUs are MEMS sensors with significant limitations.
+# This section models actual behavior, not spec sheets.
+
+phone_imu:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 ACCELEROMETER CHARACTERISTICS
+  # ---------------------------------------------------------------------------
+  accelerometer:
+    
+    # Range and resolution
+    specifications:
+      typical_range_g: 8                  # Most phones: ±8g
+      resolution_mg: 0.5                  # ~0.5 mg resolution
+      noise_density_ug_sqrt_hz: 150       # Typical MEMS noise
+      
+    # Real-world accuracy
+    accuracy:
+      # Bias (offset from true zero)
+      bias:
+        typical_mg: 20                    # ±20 mg typical offset
+        max_mg: 50                        # Can be as bad as ±50 mg
+        temperature_sensitivity_mg_per_c: 0.5
+        changes_with_temperature: true
+        
+      # Scale factor error (% error in magnitude)
+      scale_factor:
+        typical_percent: 1.0              # 1% error typical
+        max_percent: 3.0                  # Can be 3%
+        
+      # Cross-axis sensitivity
+      cross_axis:
+        typical_percent: 1.0              # X bleeds into Y/Z by 1%
+        max_percent: 3.0
+        
+      # Noise floor
+      noise:
+        stationary_rms_mg: 5              # Noise when still
+        moving_rms_mg: 20                 # Noise in car (vibration)
+        high_vibration_rms_mg: 50         # Aggressive driving
+        
+    # Update rate reality
+    update_rate:
+      android_max_hz: 500                 # SENSOR_DELAY_FASTEST
+      android_typical_hz: 100-200         # What you actually get
+      ios_max_hz: 100                     # CMMotionManager limit
+      
+      jitter:
+        at_100hz_range_ms: [8, 12]        # Should be 10ms
+        at_200hz_range_ms: [4, 6]         # Should be 5ms
+        
+    # Failure modes
+    failure_modes:
+      
+      - mode: "saturation"
+        cause: "Acceleration exceeds sensor range"
+        detection: "Reading = max range for >1 sample"
+        typical_trigger_g: 7.5            # Near 8g limit
+        action: "FLAG_DATA_CLIPPED"
+        
+      - mode: "thermal_drift"
+        cause: "Phone heating up during session"
+        detection: "Zero-g offset changes over time"
+        rate_mg_per_hour: 10-30
+        action: "RECALIBRATE_IF_POSSIBLE"
+        
+      - mode: "vibration_aliasing"
+        cause: "High-frequency vibration folds into measurement band"
+        detection: "Unusual high-frequency noise"
+        common_sources: ["engine_harmonics", "tire_rumble", "curb_strikes"]
+        action: "APPLY_LOWPASS_FILTER"
+        
+      - mode: "sensor_stuck"
+        cause: "Hardware/software fault"
+        detection: "Same value for >100ms"
+        action: "IMU_FAILURE"
+        
+  # ---------------------------------------------------------------------------
+  # 2.2 GYROSCOPE CHARACTERISTICS
+  # ---------------------------------------------------------------------------
+  gyroscope:
+    
+    # Range and resolution
+    specifications:
+      typical_range_dps: 2000             # Most phones: ±2000 °/s
+      resolution_dps: 0.01                # ~0.01 °/s resolution
+      noise_density_mdps_sqrt_hz: 10      # Typical MEMS noise
+      
+    # Real-world accuracy
+    accuracy:
+      # Bias (drift when stationary)
+      bias:
+        typical_dps: 0.5                  # ±0.5 °/s typical
+        max_dps: 2.0                      # Can be ±2 °/s
+        temperature_sensitivity_dps_per_c: 0.02
+        
+        # This is the BIG problem with gyros
+        drift_rate:
+          best_case_deg_per_min: 0.1
+          typical_deg_per_min: 0.5
+          worst_case_deg_per_min: 2.0
+          
+      # Scale factor error
+      scale_factor:
+        typical_percent: 0.5
+        max_percent: 2.0
+        
+      # Noise floor
+      noise:
+        stationary_rms_dps: 0.1
+        moving_rms_dps: 0.5
+        
+    # Update rate reality
+    update_rate:
+      android_max_hz: 500
+      android_typical_hz: 100-200
+      ios_max_hz: 100
+      
+    # Failure modes
+    failure_modes:
+      
+      - mode: "saturation"
+        cause: "Angular rate exceeds range"
+        detection: "Reading = max range"
+        typical_trigger_dps: 1900         # Near 2000 limit
+        note: "Unlikely in normal driving, possible in spin"
+        action: "FLAG_DATA_CLIPPED"
+        
+      - mode: "bias_drift"
+        cause: "Temperature change, time"
+        detection: "Integrated heading diverges from GPS"
+        action: "GPS_HEADING_CORRECTION"
+        
+      - mode: "g_sensitivity"
+        cause: "Acceleration affects gyro output (MEMS flaw)"
+        detection: "Gyro spikes during hard accel/braking"
+        typical_magnitude_dps_per_g: 0.1
+        action: "COMPENSATE_WITH_ACCEL"
+        
+  # ---------------------------------------------------------------------------
+  # 2.3 COMBINED IMU BEHAVIOR
+  # ---------------------------------------------------------------------------
+  combined:
+    
+    # Sensor fusion on phone (what Android/iOS provides)
+    phone_fusion:
+      android_game_rotation_vector:
+        description: "Fused orientation, gyro-driven, no mag"
+        drift: "Accumulates without GPS correction"
+        latency_ms: 5-20
+        
+      ios_device_motion:
+        description: "Apple's fused motion data"
+        includes_gravity_removal: true
+        latency_ms: 5-15
+        
+    # Our additional fusion
+    our_fusion:
+      gps_imu_complementary:
+        description: "Blend GPS and IMU data"
+        imu_weight_high_speed: 0.3        # At speed, trust GPS more
+        imu_weight_gps_dropout: 1.0       # No GPS = only IMU
+        max_imu_only_duration_s: 5.0      # Don't trust IMU alone long
+        
+  # ---------------------------------------------------------------------------
+  # 2.4 DETECTION STRATEGIES
+  # ---------------------------------------------------------------------------
+  detection_strategies:
+    
+    # Real-time quality assessment
+    quality_checks:
+      
+      - check: "stationary_bias_estimation"
+        when: "Vehicle stationary (GPS confirms)"
+        measure: "Mean accelerometer and gyro values"
+        action: "Update bias estimates"
+        frequency: "Every session start, pit stops"
+        
+      - check: "noise_level_monitoring"
+        measure: "Rolling RMS of sensor outputs"
+        normal_accel_mg: 20
+        high_noise_accel_mg: 50
+        action_on_high: "REDUCE_CONFIDENCE"
+        
+      - check: "saturation_detection"
+        measure: "Values near range limits"
+        threshold_percent: 95
+        action: "FLAG_CLIPPED_DATA"
+        
+      - check: "stuck_sensor_detection"
+        measure: "Variance over last 100 samples"
+        min_variance_accel_mg: 0.5
+        min_variance_gyro_dps: 0.01
+        action_on_stuck: "IMU_FAILURE"
+        
+      - check: "timestamp_monitoring"
+        measure: "Delta between samples"
+        expected_at_100hz_ms: 10
+        max_acceptable_jitter_ms: 5
+        action_on_gap: "INTERPOLATE_OR_FLAG"
+        
+  # ---------------------------------------------------------------------------
+  # 2.5 CONFIDENCE SCORING
+  # ---------------------------------------------------------------------------
+  confidence_scoring:
+    
+    base_confidence: 1.0
+    
+    factors:
+      
+      - factor: "noise_level_factor"
+        values:
+          noise_low: 1.00                 # <20 mg RMS
+          noise_moderate: 0.90            # 20-35 mg RMS
+          noise_high: 0.75                # 35-50 mg RMS
+          noise_very_high: 0.50           # >50 mg RMS
+          
+      - factor: "saturation_factor"
+        values:
+          no_saturation: 1.00
+          recent_saturation: 0.60         # Within last 500ms
+          current_saturation: 0.20
+          
+      - factor: "timestamp_quality_factor"
+        values:
+          consistent_timing: 1.00
+          minor_jitter: 0.95
+          major_jitter: 0.80
+          missing_samples: 0.60
+          
+      - factor: "bias_stability_factor"
+        values:
+          stable_bias: 1.00
+          drifting_bias: 0.85
+          unknown_bias: 0.70
+          
+      - factor: "temperature_factor"
+        values:
+          normal_temp: 1.00               # Phone not hot
+          warm: 0.95                       # Slightly warm
+          hot: 0.80                        # Hot to touch
+          thermal_throttling: 0.50         # Phone throttling
+          
+    minimum_usable_confidence: 0.50
+
+# =============================================================================
+# SECTION 3: MOUNTING ERRORS
+# =============================================================================
+# Real-world phone mounting is imperfect. This affects all measurements.
+
+mounting_errors:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 MOUNTING METHODS AND THEIR PROBLEMS
+  # ---------------------------------------------------------------------------
+  mounting_methods:
+    
+    suction_cup:
+      description: "Dashboard/windshield suction mount"
+      stability: "POOR"
+      issues:
+        - "Falls off when hot"
+        - "Vibrates significantly"
+        - "Orientation changes during session"
+        - "Sun heating causes failure"
+      maximum_movement_mm: 20
+      orientation_drift_deg: 15
+      use_recommended: false
+      
+    vent_mount:
+      description: "HVAC vent clip mount"
+      stability: "MODERATE"
+      issues:
+        - "Limited mounting angles"
+        - "Vibrates with fan"
+        - "Can come loose"
+      maximum_movement_mm: 10
+      orientation_drift_deg: 5
+      use_recommended: true
+      notes: "Better than suction, but not ideal"
+      
+    cradle_mount:
+      description: "Dedicated phone cradle, screw/bolt mounted"
+      stability: "GOOD"
+      issues:
+        - "May not fit all phones"
+        - "Installation required"
+      maximum_movement_mm: 2
+      orientation_drift_deg: 1
+      use_recommended: true
+      
+    roll_cage_mount:
+      description: "Roll cage or chassis-mounted bracket"
+      stability: "EXCELLENT"
+      issues:
+        - "Transmits more vibration directly"
+        - "Requires specific hardware"
+      maximum_movement_mm: 1
+      orientation_drift_deg: 0.5
+      use_recommended: true
+      notes: "Best stability but more vibration"
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 ORIENTATION ERRORS
+  # ---------------------------------------------------------------------------
+  orientation_errors:
+    
+    # Even with good mounting, orientation is imperfect
+    sources:
+      
+      - source: "installation_error"
+        description: "Phone not aligned with vehicle axes"
+        typical_error:
+          roll_deg: 3
+          pitch_deg: 5
+          yaw_deg: 5
+        max_error:
+          roll_deg: 10
+          pitch_deg: 15
+          yaw_deg: 15
+          
+      - source: "mount_settling"
+        description: "Mount shifts during driving"
+        typical_drift_per_hour:
+          roll_deg: 1
+          pitch_deg: 2
+          yaw_deg: 2
+          
+      - source: "thermal_expansion"
+        description: "Mount materials expand when hot"
+        typical_shift_deg: 1-3
+        
+      - source: "vibration_induced"
+        description: "High-frequency vibration averages out, but biases can shift"
+        effect: "Random walk in orientation estimate"
+        
+    # Calibration requirements
+    calibration:
+      required_at_session_start: true
+      method: "Stationary period with known heading (GPS)"
+      duration_seconds: 30
+      accuracy_achievable:
+        roll_deg: 0.5
+        pitch_deg: 0.5
+        yaw_deg: 1.0
+        
+    # Re-calibration triggers
+    recalibration_triggers:
+      - "Session restart"
+      - "Long pit stop (>5 minutes)"
+      - "IMU-GPS heading disagrees by >5° consistently"
+      - "Accelerometer gravity vector changed by >2°"
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 POSITION IN VEHICLE
+  # ---------------------------------------------------------------------------
+  position_errors:
+    
+    # Phone is not at vehicle center of gravity
+    cg_offset:
+      typical_offset:
+        forward_m: 0.5                    # Phone ahead of CG
+        lateral_m: 0.3                    # Phone left/right of CG
+        vertical_m: 0.5                   # Phone above CG
+        
+      effects:
+        - effect: "Rotation-induced acceleration"
+          description: "Phone sees extra accel due to distance from CG"
+          formula: "a_extra = omega^2 * r"
+          magnitude_at_1g_corner: 0.05g   # At 50cm offset
+          
+        - effect: "Angular velocity effects"
+          description: "Phone sees centripetal acceleration"
+          compensation: "Subtract r × ω² from lateral accel"
+          
+    # Compensation
+    compensation:
+      known_offset:
+        method: "Configure offset in vehicle setup"
+        accuracy: "Requires measurement or estimation"
+        
+      unknown_offset:
+        method: "Ignore - errors are within acceptable bounds"
+        justification: "For coaching, 0.05g error is acceptable"
+
+# =============================================================================
+# SECTION 4: TIMING JITTER
+# =============================================================================
+# Real-world timing is imperfect. This affects sensor fusion.
+
+timing_jitter:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 SOURCES OF TIMING ERRORS
+  # ---------------------------------------------------------------------------
+  sources:
+    
+    - source: "os_scheduling"
+      description: "Android/iOS scheduler delays sensor callbacks"
+      typical_delay_ms: 1-5
+      max_delay_ms: 50                    # During GC or system load
+      distribution: "Exponential with occasional spikes"
+      
+    - source: "sensor_hardware"
+      description: "Sensor internal timing not perfectly regular"
+      typical_jitter_ms: 0.5
+      max_jitter_ms: 2
+      
+    - source: "timestamp_source"
+      description: "Different clocks for different sensors"
+      android:
+        gps_clock: "GPS time (UTC)"
+        imu_clock: "System uptime (CLOCK_MONOTONIC)"
+        offset_possible_ms: 0-1000        # Must synchronize!
+      ios:
+        gps_clock: "System time"
+        imu_clock: "System time"
+        offset_typical_ms: 0-5
+        
+    - source: "processing_pipeline"
+      description: "Time from measurement to callback"
+      gps_latency_ms: 50-200              # GPS has significant latency
+      imu_latency_ms: 5-20
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 SYNCHRONIZATION CHALLENGES
+  # ---------------------------------------------------------------------------
+  synchronization:
+    
+    # GPS and IMU are on different timelines
+    gps_imu_sync:
+      challenge: "GPS timestamps are when satellite signal was received, not position time"
+      typical_offset_ms: 50-100           # GPS is 50-100ms behind IMU
+      
+      correction_method:
+        approach: "Timestamp alignment using velocity"
+        process:
+          - "Receive GPS position with timestamp T_gps"
+          - "Interpolate IMU to same timestamp"
+          - "Compare GPS velocity with IMU-integrated velocity"
+          - "Adjust offset to minimize disagreement"
+        accuracy_achievable_ms: 10-20
+        
+    # Sample time reconstruction
+    sample_timing:
+      issue: "Callback time ≠ measurement time"
+      solution: "Use sensor event timestamps, not callback time"
+      android_api: "SensorEvent.timestamp (nanoseconds, CLOCK_MONOTONIC)"
+      ios_api: "CMDeviceMotion.timestamp (seconds since boot)"
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 JITTER EFFECTS ON CALCULATIONS
+  # ---------------------------------------------------------------------------
+  effects:
+    
+    - calculation: "velocity_from_acceleration"
+      method: "Integration of acceleration"
+      sensitivity_to_timing: "HIGH"
+      error_from_1ms_jitter_at_1g: 0.01   # m/s per sample
+      cumulative: true
+      mitigation: "Use GPS to bound integrated velocity"
+      
+    - calculation: "heading_from_gyro"
+      method: "Integration of angular rate"
+      sensitivity_to_timing: "HIGH"
+      error_from_1ms_jitter_at_100dps: 0.1  # deg per sample
+      cumulative: true
+      mitigation: "Use GPS heading to correct drift"
+      
+    - calculation: "position_interpolation"
+      method: "Interpolating GPS position to IMU timestamps"
+      sensitivity_to_timing: "MODERATE"
+      error_from_10ms_timing_error_at_50mps: 0.5  # meters
+      mitigation: "Use velocity for interpolation, not position"
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 LATENCY BUDGETS
+  # ---------------------------------------------------------------------------
+  latency_budgets:
+    
+    # End-to-end from physical event to voice output
+    total_budget_ms: 500                  # Half second max for voice
+    
+    breakdown:
+      sensor_to_callback_ms: 50           # Sensor hardware + OS
+      fusion_processing_ms: 20            # Sensor fusion calculation
+      prediction_ms: 30                   # Corner/braking prediction
+      arbitration_ms: 10                  # Voice arbitration
+      tts_buffering_ms: 100               # TTS engine buffering
+      audio_output_ms: 50                 # DAC and speaker
+      human_perception_ms: 150            # Reserved for human reaction
+      
+    critical_path:
+      description: "Sensor to actionable voice"
+      target_ms: 300
+      max_acceptable_ms: 500
+      
+    warning:
+      if_exceeded: "Voice output may be too late for driver action"
+      detection: "Monitor end-to-end timestamps"
+      action: "SKIP_VOICE_IF_STALE"
+
+# =============================================================================
+# SECTION 5: DATA DROPOUTS
+# =============================================================================
+# Data loss is common. This section defines handling strategies.
+
+data_dropouts:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 GPS DROPOUT HANDLING
+  # ---------------------------------------------------------------------------
+  gps_dropout:
+    
+    # Classification of dropout severity
+    classification:
+      
+      momentary:
+        duration_ms: 0-500
+        frequency: "Common, multiple per lap"
+        handling: "Interpolate using IMU"
+        confidence_impact: 0.95           # Minimal
+        
+      brief:
+        duration_ms: 500-2000
+        frequency: "1-2 per session typical"
+        handling: "Dead reckoning with IMU"
+        confidence_impact: 0.80
+        voice_action: "Continue if confident"
+        
+      extended:
+        duration_ms: 2000-5000
+        frequency: "Occasional"
+        handling: "IMU dead reckoning, flag degraded"
+        confidence_impact: 0.50
+        voice_action: "SILENCE"
+        
+      prolonged:
+        duration_ms: 5000-10000
+        frequency: "Rare"
+        handling: "IMU only, high uncertainty"
+        confidence_impact: 0.30
+        voice_action: "SILENCE"
+        learning_action: "PAUSE_LEARNING"
+        
+      critical:
+        duration_ms: ">10000"
+        frequency: "Very rare"
+        handling: "Position unknown"
+        confidence_impact: 0.10
+        voice_action: "SILENCE"
+        learning_action: "DISCARD_LAP"
+        system_action: "RECORDING_ONLY_MODE"
+        
+    # Recovery from dropout
+    recovery:
+      reacquisition_delay_ms: 500         # Wait for GPS to stabilize
+      position_jump_threshold_m: 50       # If position jumps >50m, distrust
+      velocity_agreement_required: true   # GPS vel must match IMU
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 IMU DROPOUT HANDLING
+  # ---------------------------------------------------------------------------
+  imu_dropout:
+    
+    # IMU dropouts are more serious (higher rate sensor)
+    classification:
+      
+      single_sample:
+        description: "1-2 samples missing"
+        handling: "Linear interpolation"
+        confidence_impact: 0.99
+        
+      brief_gap:
+        duration_samples: 3-10
+        handling: "Interpolate with velocity constraint"
+        confidence_impact: 0.90
+        
+      significant_gap:
+        duration_samples: 10-50
+        handling: "Flag interval as unreliable"
+        confidence_impact: 0.70
+        integration_action: "RESET_INTEGRATION"
+        
+      extended_gap:
+        duration_samples: ">50"
+        handling: "IMU unavailable"
+        confidence_impact: 0.50
+        system_action: "GPS_ONLY_MODE"
+        
+    # Detection
+    detection:
+      expected_interval_ms: 10            # At 100 Hz
+      gap_threshold_ms: 25                # 2.5× expected = gap
+      monitoring: "Track timestamp deltas continuously"
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 COMBINED DROPOUT SCENARIOS
+  # ---------------------------------------------------------------------------
+  combined_scenarios:
+    
+    - scenario: "GPS dropout, IMU available"
+      action: "Dead reckon with IMU"
+      max_duration_s: 5
+      confidence_decay: "Linear from 1.0 to 0.5 over 5s"
+      
+    - scenario: "IMU dropout, GPS available"
+      action: "Use GPS only"
+      limitation: "No high-rate data, corner timing degraded"
+      confidence: 0.70
+      
+    - scenario: "Both dropout briefly"
+      action: "Coast on last known state"
+      max_duration_ms: 500
+      after_timeout: "POSITION_UNKNOWN"
+      
+    - scenario: "Both extended dropout"
+      action: "System cannot function"
+      voice: "DISABLED"
+      learning: "PAUSED"
+      recording: "FLAGGED_INVALID"
+
+# =============================================================================
+# SECTION 6: DRIFT CORRECTION MECHANISMS
+# =============================================================================
+# How to correct accumulated errors over time.
+
+drift_correction:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 IMU DRIFT CORRECTION WITH GPS
+  # ---------------------------------------------------------------------------
+  imu_gps_correction:
+    
+    # Velocity drift correction
+    velocity:
+      method: "Complementary filter"
+      description: "Blend GPS velocity with IMU-integrated velocity"
+      formula: "v_fused = α × v_gps + (1-α) × (v_imu_integrated)"
+      alpha_typical: 0.9                  # Heavy GPS weighting
+      alpha_gps_degraded: 0.5             # Less GPS when HDOP high
+      alpha_gps_dropout: 0.0              # IMU only during dropout
+      
+      correction_rate:
+        description: "How fast to correct IMU to GPS"
+        time_constant_s: 1.0
+        max_correction_rate_mps_per_s: 1.0  # Don't snap suddenly
+        
+    # Heading drift correction
+    heading:
+      method: "GPS course over ground correction"
+      requires_speed_above_mps: 5         # GPS heading unreliable below this
+      
+      correction_rate:
+        time_constant_s: 2.0
+        max_correction_rate_dps: 5        # Gradual correction
+        
+      limits:
+        max_correction_deg: 20            # If >20° off, something is wrong
+        action_on_large_error: "RECALIBRATE_REQUIRED"
+        
+    # Position drift (dead reckoning error)
+    position:
+      method: "Reset to GPS on reacquisition"
+      description: "After GPS dropout, snap to GPS position"
+      
+      validation:
+        - check: "Position jump < 50m (expected from DR error)"
+        - check: "Velocity agrees with IMU"
+        - check: "Position is on track"
+        
+      if_validation_fails:
+        action: "FLAG_POSITION_UNCERTAIN"
+        recovery: "Wait for consistent GPS over 3 samples"
+        
+  # ---------------------------------------------------------------------------
+  # 6.2 BIAS ESTIMATION AND CORRECTION
+  # ---------------------------------------------------------------------------
+  bias_correction:
+    
+    # Accelerometer bias
+    accelerometer:
+      estimation_method: "Stationary detection"
+      description: "When vehicle stationary, accel should read (0, 0, 1)g"
+      
+      stationary_detection:
+        gps_speed_threshold_mps: 0.5
+        gps_speed_variance_threshold: 0.1
+        duration_required_s: 5
+        
+      bias_update:
+        method: "Exponential moving average"
+        alpha: 0.1                        # Slow adaptation
+        max_bias_mg: 100                  # Sanity limit
+        
+    # Gyroscope bias
+    gyroscope:
+      estimation_method: "Stationary detection + GPS heading"
+      
+      stationary_method:
+        description: "When stationary, gyro should read zero"
+        duration_required_s: 5
+        
+      moving_method:
+        description: "Compare integrated heading to GPS course"
+        speed_required_mps: 10
+        correction: "Adjust bias to minimize heading drift"
+        
+      bias_update:
+        method: "Kalman filter update"
+        max_bias_dps: 5                   # Sanity limit
+        
+  # ---------------------------------------------------------------------------
+  # 6.3 LONG-TERM DRIFT MONITORING
+  # ---------------------------------------------------------------------------
+  monitoring:
+    
+    # Track drift over session
+    metrics:
+      
+      - metric: "heading_drift_rate"
+        unit: "deg/min"
+        normal: "<0.5"
+        warning: "0.5-2.0"
+        critical: ">2.0"
+        action_on_critical: "RECALIBRATION_REQUIRED"
+        
+      - metric: "velocity_drift"
+        unit: "m/s RMS error vs GPS"
+        normal: "<0.5"
+        warning: "0.5-1.0"
+        critical: ">1.0"
+        action_on_critical: "REDUCE_IMU_WEIGHT"
+        
+      - metric: "position_dr_error"
+        description: "Dead reckoning error after 5s GPS dropout"
+        unit: "meters"
+        normal: "<10"
+        warning: "10-25"
+        critical: ">25"
+        action_on_critical: "REDUCE_DROPOUT_TOLERANCE"
+
+# =============================================================================
+# SECTION 7: SENSOR DISAGREEMENT AND LEARNING INVALIDATION
+# =============================================================================
+# When sensor disagreement means data cannot be trusted for learning.
+
+sensor_disagreement:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 DISAGREEMENT THRESHOLDS
+  # ---------------------------------------------------------------------------
+  thresholds:
+    
+    # Velocity disagreement (GPS vs IMU-integrated)
+    velocity:
+      minor_mps: 0.5                      # Normal noise
+      moderate_mps: 1.0                   # Concerning
+      major_mps: 2.0                      # Significant problem
+      critical_mps: 5.0                   # One sensor is wrong
+      
+      actions:
+        minor: "NORMAL_OPERATION"
+        moderate: "FLAG_DATA"
+        major: "USE_CONSERVATIVE_ESTIMATE"
+        critical: "DISCARD_INTERVAL"
+        
+    # Acceleration disagreement (GPS-derived vs IMU)
+    acceleration:
+      minor_g: 0.1
+      moderate_g: 0.2
+      major_g: 0.3
+      critical_g: 0.5
+      
+      actions:
+        minor: "NORMAL_OPERATION"
+        moderate: "FLAG_DATA"
+        major: "USE_GPS_DERIVED"          # GPS accel from velocity change
+        critical: "DISCARD_INTERVAL"
+        
+    # Heading disagreement (GPS course vs IMU-integrated)
+    heading:
+      # Only valid above minimum speed
+      minimum_speed_mps: 10
+      
+      minor_deg: 3
+      moderate_deg: 7
+      major_deg: 15
+      critical_deg: 30
+      
+      actions:
+        minor: "NORMAL_OPERATION"
+        moderate: "INCREASE_GPS_WEIGHT"
+        major: "USE_GPS_HEADING"
+        critical: "FLAG_HEADING_INVALID"
+        
+  # ---------------------------------------------------------------------------
+  # 7.2 LEARNING INVALIDATION RULES
+  # ---------------------------------------------------------------------------
+  learning_invalidation:
+    
+    # When to REJECT data from learning
+    reject_segment_if:
+      
+      - condition: "velocity_disagreement > 2.0 m/s for >1s"
+        reason: "Cannot trust speed data for performance analysis"
+        
+      - condition: "acceleration_disagreement > 0.3g for >0.5s"
+        reason: "Cannot trust lateral/longitudinal g for envelope calculation"
+        
+      - condition: "gps_dropout > 2s in segment"
+        reason: "Position uncertainty too high for track mapping"
+        
+      - condition: "imu_saturation in segment"
+        reason: "Peak values unknown (clipped)"
+        
+      - condition: "heading_disagreement > 15° at corner entry"
+        reason: "Corner identification may be wrong"
+        
+      - condition: "confidence < 0.7 at any point"
+        reason: "Overall data quality insufficient"
+        
+    # When to REJECT entire lap from learning
+    reject_lap_if:
+      
+      - condition: ">10% of lap has confidence < 0.7"
+        reason: "Too much low-quality data"
+        
+      - condition: ">3 segments rejected"
+        reason: "Too many segment-level rejections"
+        
+      - condition: "lap time disagrees with GPS/IMU by >1%"
+        reason: "Timing inconsistency"
+        
+      - condition: "track geometry changed mid-lap"
+        reason: "Track mapping invalid"
+        
+      - condition: "any gps_dropout > 5s"
+        reason: "Major position uncertainty"
+        
+    # When to PAUSE learning entirely
+    pause_learning_if:
+      
+      - condition: "3 consecutive laps rejected"
+        reason: "Systemic data quality issue"
+        action: "ALERT_USER"
+        
+      - condition: "sensor_bias_drift detected"
+        reason: "Calibration degraded"
+        action: "REQUEST_RECALIBRATION"
+        
+      - condition: "persistent_disagreement > 5 minutes"
+        reason: "Sensors not trustworthy"
+        action: "RECORDING_ONLY_MODE"
+        
+  # ---------------------------------------------------------------------------
+  # 7.3 DISAGREEMENT RESOLUTION
+  # ---------------------------------------------------------------------------
+  resolution:
+    
+    # How to handle disagreement when it occurs
+    strategies:
+      
+      conservative_estimate:
+        description: "Use the lower of two speed/accel estimates"
+        rationale: "Safer advice if we underestimate capability"
+        applies_to: ["velocity", "lateral_g", "braking_g"]
+        
+      gps_preference:
+        description: "Prefer GPS when quality is good"
+        conditions: "HDOP < 2.0 AND satellites >= 6"
+        applies_to: ["position", "velocity", "heading"]
+        
+      imu_preference:
+        description: "Prefer IMU for high-frequency dynamics"
+        conditions: "Short-term accelerations and rotations"
+        applies_to: ["jerk", "angular_rate", "vibration"]
+        
+      fusion_fallback:
+        description: "Weighted blend based on confidence"
+        formula: "value = w_gps × gps_value + w_imu × imu_value"
+        weights: "Based on individual confidence scores"
+        
+    # When disagreement cannot be resolved
+    unresolvable:
+      detection: "Disagreement persists for >5s with no clear cause"
+      action: "VOICE_DISABLED"
+      learning_action: "PAUSED"
+      user_notification: "Sensor disagreement - coaching paused"
+      recovery: "Automatic when agreement restored for >10s"
+
+# =============================================================================
+# SECTION 8: CONFIDENCE CALCULATION SUMMARY
+# =============================================================================
+# Final confidence is product of all factors.
+
+confidence_calculation:
+
+  # Master formula
+  formula: |
+    confidence = base_confidence
+                 × gps_confidence
+                 × imu_confidence
+                 × fusion_agreement
+                 × timing_quality
+                 × mounting_stability
+
+  # Thresholds for system behavior
+  thresholds:
+    full_operation: 0.85
+    reduced_voice: 0.70
+    voice_disabled: 0.50
+    recording_only: 0.30
+    system_invalid: 0.10
+    
+  # Update rate
+  calculation_rate_hz: 10                 # Recalculate confidence at 10 Hz
+  
+  # Hysteresis to prevent rapid mode switching
+  hysteresis:
+    upgrade_delay_s: 2.0                  # Wait 2s before upgrading mode
+    downgrade_delay_s: 0.5                # Downgrade faster than upgrade
+
+# =============================================================================
+# END OF SENSOR REALITY MODEL
+# =============================================================================
+#
+# CERTIFICATION STATEMENT:
+# This document models the ACTUAL behavior of consumer phone sensors in
+# motorsport environments. All values are empirically derived or represent
+# conservative estimates. No idealized assumptions are made.
+#
+# The system MUST be designed to handle all failure modes described herein.
+# Silence is always preferred over incorrect advice based on faulty sensors.
+#
+# =============================================================================
