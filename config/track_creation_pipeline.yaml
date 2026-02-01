@@ -1,0 +1,1435 @@
+# =============================================================================
+# TRACK CREATION PIPELINE - GEOMETRY AND TRUST MODELING
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: Track geometry is the foundation of all coaching.
+# Errors in track geometry propagate to every subsequent calculation.
+# Therefore, geometry creation is CONSERVATIVE and CONFIDENCE-SCORED.
+#
+# NO UI. NO PHYSICS. GEOMETRY AND TRUST ONLY.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "GEOMETRY_PIPELINE"
+
+# =============================================================================
+# SECTION 1: PIPELINE OVERVIEW
+# =============================================================================
+
+pipeline_overview:
+
+  description: |
+    The track creation pipeline builds a high-confidence geometric model
+    of a racing circuit from multiple data sources. The pipeline supports
+    three primary methods and one optional advanced mode.
+    
+    All methods produce the same output format: a sequence of track segments
+    with position, direction, curvature, and confidence scores.
+    
+    The pipeline is designed to:
+    1. Accept imperfect data gracefully
+    2. Reject outliers aggressively
+    3. Score confidence at every level
+    4. Abort rather than produce bad geometry
+    
+  output_format:
+    type: "TrackGeometry"
+    components:
+      - centerline: "Ordered list of centerline points"
+      - segments: "Track divided into logical segments (straights, corners)"
+      - metadata: "Track length, name, creation confidence"
+      
+  methods:
+    method_1:
+      name: "Driven GPS Laps"
+      description: "Build geometry from multiple driven laps using GPS only"
+      minimum_input: "3 complete laps"
+      confidence_ceiling: 0.85
+      
+    method_2:
+      name: "Satellite/Map Anchor"
+      description: "Use reference map as anchor, refine with driven data"
+      minimum_input: "Reference map + 1 driven lap"
+      confidence_ceiling: 0.90
+      
+    method_3:
+      name: "GPS + IMU Fusion"
+      description: "Fuse GPS position with IMU for higher-rate geometry"
+      minimum_input: "3 complete laps with synchronized GPS+IMU"
+      confidence_ceiling: 0.92
+      
+  advanced_mode:
+    name: "Track Width Estimation"
+    description: "Estimate track width from edge passes"
+    optional: true
+    requires: "Dedicated left/right edge laps"
+
+# =============================================================================
+# SECTION 2: METHOD 1 - DRIVEN GPS LAPS
+# =============================================================================
+# Build track geometry purely from GPS data collected during driven laps.
+# This is the simplest method but requires multiple laps for confidence.
+
+method_1_gps_laps:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 INPUT REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  input_requirements:
+    
+    minimum_laps: 3
+    preferred_laps: 5
+    maximum_useful_laps: 10               # Diminishing returns beyond this
+    
+    gps_requirements:
+      minimum_rate_hz: 5
+      preferred_rate_hz: 10
+      minimum_satellites: 5
+      preferred_satellites: 8
+      maximum_hdop: 2.5
+      preferred_hdop: 1.5
+      
+    lap_requirements:
+      complete_lap_required: true         # Must cross start/finish
+      minimum_lap_time_s: 30              # Reject impossibly short laps
+      maximum_lap_time_s: 600             # Reject 10+ minute laps
+      consistent_direction: true          # All laps same direction
+      
+  # ---------------------------------------------------------------------------
+  # 2.2 LAP RECORDING
+  # ---------------------------------------------------------------------------
+  lap_recording:
+    
+    # Start/finish detection
+    start_finish:
+      method: "GPS position crossing virtual line"
+      
+      initial_detection:
+        description: "First lap establishes approximate S/F location"
+        trigger: "User indication OR speed minimum after stop"
+        accuracy_required_m: 50           # Rough initial estimate
+        
+      refinement:
+        description: "Subsequent laps refine S/F location"
+        method: "Cluster crossing points, find centroid"
+        convergence_threshold_m: 5        # S/F accurate to 5m
+        
+      line_definition:
+        width_m: 20                        # Virtual finish line width
+        orientation: "Perpendicular to average heading at crossing"
+        
+    # Point recording
+    point_recording:
+      record_all_points: true
+      minimum_distance_between_points_m: 0.5  # Avoid duplicate points
+      maximum_distance_between_points_m: 10   # Flag gaps
+      
+      per_point_data:
+        - latitude_deg
+        - longitude_deg
+        - altitude_m                      # Record but don't trust
+        - timestamp_ms
+        - speed_mps
+        - heading_deg
+        - hdop
+        - satellite_count
+        - accuracy_estimate_m
+        
+  # ---------------------------------------------------------------------------
+  # 2.3 LAP ALIGNMENT
+  # ---------------------------------------------------------------------------
+  lap_alignment:
+    
+    description: |
+      Each lap's points must be aligned to a common reference frame.
+      GPS drift means raw laps don't overlay perfectly.
+      
+    # Distance normalization
+    distance_normalization:
+      method: "Cumulative distance along path"
+      description: "Convert each lap to distance-from-start representation"
+      interpolation: "Cubic spline"
+      output_resolution_m: 1.0            # One point per meter
+      
+    # Temporal alignment
+    temporal_alignment:
+      method: "Dynamic Time Warping (DTW)"
+      description: "Align laps by shape similarity, not absolute position"
+      
+      parameters:
+        window_size_percent: 10           # Allow 10% stretch/compress
+        distance_metric: "Euclidean position"
+        
+      output: "Aligned lap with normalized distance"
+      
+    # Position alignment (remove systematic offset)
+    position_alignment:
+      
+      method: "Iterative Closest Point (ICP)"
+      description: "Minimize position error between reference and each lap"
+      
+      reference_lap:
+        selection: "Lap with lowest average HDOP"
+        fallback: "Median of all laps"
+        
+      alignment_process:
+        - step: "Compute centroid of each lap"
+        - step: "Translate all laps to common centroid"
+        - step: "Rotate to minimize heading difference at S/F"
+        - step: "Fine-tune with ICP (translation only, no scale)"
+        
+      constraints:
+        max_translation_m: 20             # Reject if >20m shift needed
+        max_rotation_deg: 5               # Reject if >5° rotation needed
+        
+      failure_action: "REJECT_LAP"
+        
+  # ---------------------------------------------------------------------------
+  # 2.4 OUTLIER REJECTION
+  # ---------------------------------------------------------------------------
+  outlier_rejection:
+    
+    # Point-level outliers
+    point_outliers:
+      
+      # Statistical outliers
+      statistical:
+        method: "Median Absolute Deviation (MAD)"
+        description: "Flag points that deviate significantly from median"
+        threshold_mad: 3.0                # >3 MAD = outlier
+        window_points: 20                 # Look at 20 neighboring points
+        
+      # Physics-based outliers
+      physics:
+        
+        - check: "position_jump"
+          description: "Position changed more than physics allows"
+          max_speed_mps: 100              # ~360 km/h
+          max_acceleration_mps2: 20       # ~2g
+          action: "REMOVE_POINT"
+          
+        - check: "direction_reversal"
+          description: "Heading reversed impossibly fast"
+          max_heading_rate_dps: 90        # 90°/s max yaw rate
+          action: "REMOVE_POINT"
+          
+        - check: "stationary_in_motion"
+          description: "Speed = 0 but position changing"
+          action: "FLAG_SUSPECT"
+          
+      # GPS quality-based outliers
+      gps_quality:
+        
+        - check: "hdop_spike"
+          threshold: 3.0
+          action: "REDUCE_WEIGHT"
+          weight: 0.5
+          
+        - check: "satellite_drop"
+          threshold: 4
+          action: "REDUCE_WEIGHT"
+          weight: 0.3
+          
+        - check: "accuracy_degraded"
+          threshold_m: 10
+          action: "REDUCE_WEIGHT"
+          weight: 0.5
+          
+    # Lap-level outliers
+    lap_outliers:
+      
+      - check: "lap_length_deviation"
+        description: "Lap significantly longer/shorter than median"
+        threshold_percent: 5              # >5% deviation = suspect
+        action: "REJECT_LAP"
+        
+      - check: "shape_deviation"
+        description: "Lap shape doesn't match other laps"
+        method: "Frechet distance"
+        threshold_m: 20                   # >20m Frechet = reject
+        action: "REJECT_LAP"
+        
+      - check: "average_hdop"
+        threshold: 2.0
+        action: "REDUCE_LAP_WEIGHT"
+        
+  # ---------------------------------------------------------------------------
+  # 2.5 CENTERLINE COMPUTATION
+  # ---------------------------------------------------------------------------
+  centerline_computation:
+    
+    description: |
+      Compute the best-estimate centerline from aligned, filtered laps.
+      The centerline is NOT the geometric center of the track, but the
+      consensus driving line from collected data.
+      
+    method: "Weighted Median"
+    
+    process:
+      
+      - step: "resample_laps"
+        description: "Ensure all laps have points at same distances"
+        resolution_m: 1.0
+        
+      - step: "compute_weighted_median"
+        description: "At each distance, compute weighted median position"
+        weights_from:
+          - "lap_quality (1/average_hdop)"
+          - "point_quality (1/hdop)"
+          - "lap_consistency (1/shape_deviation)"
+        median_method: "Geometric median (Weiszfeld algorithm)"
+        
+      - step: "smooth_centerline"
+        description: "Remove noise from median centerline"
+        # See smoothing section below
+        
+      - step: "close_loop"
+        description: "Ensure start and end connect smoothly"
+        method: "Blend last 50m with first 50m"
+        
+    output:
+      type: "OrderedPointList"
+      resolution_m: 1.0
+      fields_per_point:
+        - distance_m
+        - latitude_deg
+        - longitude_deg
+        - heading_deg
+        - curvature_1_per_m
+        - confidence
+        
+  # ---------------------------------------------------------------------------
+  # 2.6 CONFIDENCE SCORING
+  # ---------------------------------------------------------------------------
+  confidence_scoring:
+    
+    # Point-level confidence
+    point_confidence:
+      
+      factors:
+        
+        - factor: "lap_agreement"
+          description: "How well do laps agree at this point?"
+          method: "1 / (1 + std_dev_m)"
+          weight: 0.4
+          
+        - factor: "gps_quality_average"
+          description: "Average GPS quality at this point across laps"
+          method: "mean(1 / hdop)"
+          weight: 0.3
+          
+        - factor: "sample_count"
+          description: "How many laps contributed to this point?"
+          method: "min(1.0, lap_count / preferred_laps)"
+          weight: 0.2
+          
+        - factor: "geometry_consistency"
+          description: "Is curvature consistent across laps?"
+          method: "1 / (1 + curvature_std_dev)"
+          weight: 0.1
+          
+      calculation: "Product of weighted factors"
+      minimum_confidence: 0.0
+      maximum_confidence: 1.0
+      
+    # Segment-level confidence (aggregated from points)
+    segment_confidence:
+      
+      method: "Minimum point confidence in segment"
+      rationale: "Segment is only as reliable as its weakest point"
+      
+      modifiers:
+        - "Reduce by 0.05 if any point was interpolated"
+        - "Reduce by 0.10 if segment contains rejected points"
+        - "Reduce by 0.05 if GPS quality varied significantly"
+        
+    # Track-level confidence
+    track_confidence:
+      
+      method: "Weighted average of segment confidences"
+      weights: "Segment length"
+      
+      modifiers:
+        - "Reduce by 0.05 for each lap rejected"
+        - "Reduce by 0.10 if fewer than preferred_laps used"
+        - "Reduce by 0.05 if start/finish detection uncertain"
+        
+      maximum_achievable: 0.85            # Method 1 ceiling
+
+# =============================================================================
+# SECTION 3: METHOD 2 - SATELLITE/MAP ANCHOR
+# =============================================================================
+# Use a reference map (satellite imagery or official track map) as anchor.
+# Driven data refines the anchor but the map provides global accuracy.
+
+method_2_map_anchor:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 INPUT REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  input_requirements:
+    
+    reference_map:
+      types:
+        - "satellite_imagery"             # Google/Bing satellite tiles
+        - "official_track_map"            # FIA/circuit official maps
+        - "osm_data"                       # OpenStreetMap circuit data
+        - "user_drawn_centerline"          # User-provided GPS trace
+        
+      minimum_resolution_m: 1.0           # At least 1m/pixel for satellite
+      required_coverage: "Complete circuit"
+      georeferencing_required: true       # Must have lat/lon coordinates
+      
+    driven_data:
+      minimum_laps: 1
+      preferred_laps: 3
+      purpose: "Refine map anchor, validate geometry"
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 REFERENCE MAP PROCESSING
+  # ---------------------------------------------------------------------------
+  reference_processing:
+    
+    # Satellite imagery processing
+    satellite_imagery:
+      
+      extraction_method: "Edge detection + centerline estimation"
+      
+      process:
+        - step: "load_tiles"
+          description: "Load satellite imagery covering circuit area"
+          
+        - step: "detect_track_surface"
+          description: "Identify asphalt/concrete regions"
+          method: "Color/texture classification"
+          
+        - step: "detect_edges"
+          description: "Find track boundaries"
+          method: "Canny edge detection + Hough transform"
+          
+        - step: "extract_centerline"
+          description: "Compute centerline from detected edges"
+          method: "Medial axis transform"
+          
+        - step: "sequence_centerline"
+          description: "Order points into continuous path"
+          method: "Traveling salesman approximation"
+          
+      accuracy:
+        typical_m: 2-5                    # Depends on image quality
+        confidence: 0.80
+        
+    # Official track map processing
+    official_map:
+      
+      requirements:
+        - "Georeferenced (known control points)"
+        - "Vector format preferred (SVG, DXF)"
+        - "Centerline or both edges defined"
+        
+      process:
+        - step: "load_geometry"
+        - step: "validate_closure"         # Track must close
+        - step: "resample_to_uniform"      # Regular point spacing
+        - step: "compute_curvature"
+        
+      accuracy:
+        typical_m: 1-3
+        confidence: 0.85
+        
+    # OpenStreetMap data
+    osm_data:
+      
+      query: "highway=raceway OR leisure=track"
+      
+      process:
+        - step: "query_overpass_api"
+        - step: "extract_way_geometry"
+        - step: "validate_closure"
+        - step: "resample"
+        
+      accuracy:
+        typical_m: 5-20                   # OSM quality varies widely
+        confidence: 0.60                  # Low confidence, needs validation
+        
+    # User-drawn centerline
+    user_drawn:
+      
+      format: "GPS trace (GPX, KML) or point list"
+      
+      validation:
+        - "Must be closed loop"
+        - "Length within expected range (400m-30km)"
+        - "No self-intersections"
+        
+      accuracy:
+        depends_on: "Source quality"
+        confidence: 0.50                  # Needs validation with driven data
+        
+  # ---------------------------------------------------------------------------
+  # 3.3 DRIVEN DATA ALIGNMENT TO MAP
+  # ---------------------------------------------------------------------------
+  map_alignment:
+    
+    description: |
+      Align driven GPS laps to the reference map. The map provides the
+      global reference frame; driven data refines local accuracy.
+      
+    # Coarse alignment
+    coarse_alignment:
+      
+      method: "Feature matching"
+      
+      process:
+        - step: "identify_features_in_map"
+          features:
+            - "Hairpin corners (very tight radius)"
+            - "Long straights (low curvature segments)"
+            - "Chicanes (S-bends)"
+            - "Start/finish straight"
+            
+        - step: "identify_features_in_driven"
+          method: "Curvature analysis of GPS trace"
+          
+        - step: "match_features"
+          method: "Hungarian algorithm for optimal assignment"
+          minimum_matches: 3
+          
+        - step: "compute_transform"
+          description: "Rigid transform (rotation + translation)"
+          method: "Procrustes analysis"
+          
+      success_criteria:
+        minimum_features_matched: 3
+        maximum_residual_error_m: 20
+        
+    # Fine alignment
+    fine_alignment:
+      
+      method: "Iterative Closest Point (ICP)"
+      
+      parameters:
+        max_iterations: 100
+        convergence_threshold_m: 0.1
+        outlier_rejection: true
+        outlier_threshold_m: 10
+        
+      constraints:
+        translation_only: false           # Allow rotation
+        max_rotation_deg: 10
+        no_scaling: true                  # Never scale
+        
+      success_criteria:
+        mean_alignment_error_m: "<5"
+        max_alignment_error_m: "<15"
+        
+    # Alignment failure handling
+    failure_handling:
+      
+      - condition: "Features cannot be matched"
+        action: "Fall back to centroid alignment"
+        confidence_penalty: 0.15
+        
+      - condition: "ICP does not converge"
+        action: "Use coarse alignment only"
+        confidence_penalty: 0.10
+        
+      - condition: "Alignment error too large"
+        action: "ABORT - map may not match circuit"
+        
+  # ---------------------------------------------------------------------------
+  # 3.4 MAP REFINEMENT WITH DRIVEN DATA
+  # ---------------------------------------------------------------------------
+  map_refinement:
+    
+    description: |
+      The reference map provides the overall shape, but driven GPS data
+      can refine local accuracy, especially in areas where the map is
+      less accurate.
+      
+    method: "Weighted blend"
+    
+    blending:
+      
+      # Weight map vs driven based on confidence
+      map_weight_base: 0.7
+      driven_weight_base: 0.3
+      
+      adjustments:
+        
+        - condition: "High GPS quality (HDOP < 1.5)"
+          adjustment: "Increase driven weight to 0.5"
+          
+        - condition: "Multiple laps agree"
+          adjustment: "Increase driven weight to 0.6"
+          
+        - condition: "Map is satellite-derived"
+          adjustment: "Increase driven weight to 0.5"
+          
+        - condition: "Map is official/surveyed"
+          adjustment: "Keep map weight at 0.8"
+          
+    per_point_blend:
+      formula: |
+        refined_position = w_map × map_position + w_driven × driven_median
+        where w_map + w_driven = 1.0
+        
+      smoothing: "Apply after blending to ensure continuity"
+      
+  # ---------------------------------------------------------------------------
+  # 3.5 CONFIDENCE SCORING
+  # ---------------------------------------------------------------------------
+  confidence_scoring:
+    
+    # Map source confidence
+    map_confidence:
+      official_surveyed: 0.90
+      satellite_high_res: 0.80
+      satellite_low_res: 0.65
+      osm_data: 0.60
+      user_drawn: 0.50
+      
+    # Alignment confidence
+    alignment_confidence:
+      excellent_alignment: 0.95           # <2m mean error
+      good_alignment: 0.85                # 2-5m mean error
+      acceptable_alignment: 0.70          # 5-10m mean error
+      poor_alignment: 0.50                # 10-15m mean error
+      
+    # Combined confidence
+    track_confidence:
+      formula: "map_confidence × alignment_confidence × driven_validation"
+      maximum_achievable: 0.90            # Method 2 ceiling
+
+# =============================================================================
+# SECTION 4: METHOD 3 - GPS + IMU FUSION
+# =============================================================================
+# Fuse GPS position with IMU data for higher accuracy and rate.
+# IMU fills gaps and provides sub-GPS-rate geometry.
+
+method_3_gps_imu_fusion:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 INPUT REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  input_requirements:
+    
+    gps:
+      minimum_rate_hz: 5
+      preferred_rate_hz: 10
+      requirements: "Same as Method 1"
+      
+    imu:
+      minimum_rate_hz: 50
+      preferred_rate_hz: 100
+      required_sensors: ["accelerometer", "gyroscope"]
+      calibration_required: true
+      
+    synchronization:
+      maximum_time_offset_ms: 20
+      method: "Timestamp alignment via velocity correlation"
+      
+    minimum_laps: 3
+    preferred_laps: 5
+    
+  # ---------------------------------------------------------------------------
+  # 4.2 SENSOR FUSION ARCHITECTURE
+  # ---------------------------------------------------------------------------
+  fusion_architecture:
+    
+    method: "Error-State Kalman Filter (ESKF)"
+    
+    description: |
+      The ESKF maintains a state estimate that fuses GPS and IMU.
+      IMU provides high-rate prediction; GPS provides correction.
+      The filter estimates position, velocity, orientation, and sensor biases.
+      
+    state_vector:
+      - position_ned: [3]                 # North, East, Down position
+      - velocity_ned: [3]                 # Velocity in NED frame
+      - orientation_quat: [4]             # Quaternion orientation
+      - accel_bias: [3]                   # Accelerometer bias estimate
+      - gyro_bias: [3]                    # Gyroscope bias estimate
+      
+    # Prediction step (IMU rate)
+    prediction:
+      rate_hz: 100                        # Match IMU rate
+      
+      process:
+        - "Remove estimated bias from IMU readings"
+        - "Integrate acceleration to update velocity"
+        - "Integrate velocity to update position"
+        - "Integrate angular rate to update orientation"
+        - "Propagate covariance with process noise"
+        
+      process_noise:
+        position_m: 0.01                  # Per sqrt(dt)
+        velocity_mps: 0.1
+        orientation_rad: 0.001
+        accel_bias_mps2: 0.0001
+        gyro_bias_rps: 0.00001
+        
+    # Update step (GPS rate)
+    update:
+      rate_hz: 5-10                       # Match GPS rate
+      
+      process:
+        - "Compute innovation (GPS - predicted)"
+        - "Check innovation against threshold (outlier rejection)"
+        - "Compute Kalman gain"
+        - "Update state estimate"
+        - "Update covariance"
+        
+      measurement_noise:
+        position_m: 4.0                   # Typical GPS error
+        velocity_mps: 0.3                 # GPS velocity error
+        heading_rad: 0.05                 # ~3° at speed
+        
+      outlier_rejection:
+        method: "Mahalanobis distance"
+        threshold: 5.0                    # 5 sigma
+        
+  # ---------------------------------------------------------------------------
+  # 4.3 HIGH-RATE GEOMETRY EXTRACTION
+  # ---------------------------------------------------------------------------
+  geometry_extraction:
+    
+    description: |
+      Extract track geometry from fused state estimates at high rate.
+      This provides smoother geometry than GPS-only.
+      
+    extraction_rate_hz: 100               # Match IMU/fusion rate
+    
+    per_sample_extraction:
+      - position_lat_lon: "From position_ned via coordinate transform"
+      - heading_deg: "From orientation quaternion"
+      - speed_mps: "Magnitude of velocity_ned"
+      - lateral_accel_g: "From accelerometer, body frame"
+      - longitudinal_accel_g: "From accelerometer, body frame"
+      - yaw_rate_dps: "From gyroscope, body frame"
+      - curvature: "yaw_rate / speed (when speed > threshold)"
+      
+    downsampling:
+      output_rate_hz: 10                  # Downsample for geometry storage
+      method: "Average within window"
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 LAP PROCESSING
+  # ---------------------------------------------------------------------------
+  lap_processing:
+    
+    # Same alignment logic as Method 1
+    alignment: "See method_1_gps_laps.lap_alignment"
+    
+    # Additional IMU-based validation
+    imu_validation:
+      
+      - check: "integrated_heading_closure"
+        description: "Heading integral over lap should ≈ 360° (or 0 for ovals)"
+        tolerance_deg: 5
+        failure_action: "FLAG_LAP_SUSPECT"
+        
+      - check: "velocity_integral_closure"
+        description: "Integrated velocity should return to start"
+        tolerance_m: 50                   # Allow 50m drift over lap
+        failure_action: "FLAG_LAP_SUSPECT"
+        
+      - check: "imu_gps_agreement"
+        description: "Fused solution should agree with GPS"
+        max_divergence_m: 10
+        failure_action: "REDUCE_CONFIDENCE"
+        
+  # ---------------------------------------------------------------------------
+  # 4.5 CURVATURE COMPUTATION
+  # ---------------------------------------------------------------------------
+  curvature_computation:
+    
+    description: |
+      IMU provides superior curvature estimation compared to GPS alone.
+      Curvature is derived from yaw rate and speed, not position derivatives.
+      
+    method: "κ = ω / v"
+    
+    where:
+      kappa: "Curvature (1/m)"
+      omega: "Yaw rate (rad/s) from gyroscope"
+      v: "Speed (m/s) from fused velocity"
+      
+    filtering:
+      lowpass_cutoff_hz: 2.0              # Remove high-frequency noise
+      minimum_speed_mps: 5.0              # Below this, curvature unreliable
+      
+    validation:
+      cross_check: "Compare with GPS-derived curvature (position 2nd derivative)"
+      max_disagreement_percent: 20
+      
+  # ---------------------------------------------------------------------------
+  # 4.6 CONFIDENCE SCORING
+  # ---------------------------------------------------------------------------
+  confidence_scoring:
+    
+    # Fusion quality metrics
+    fusion_confidence:
+      
+      factors:
+        - factor: "filter_convergence"
+          description: "Has Kalman filter converged?"
+          method: "Covariance diagonal < threshold"
+          
+        - factor: "innovation_magnitude"
+          description: "Are GPS updates reasonable?"
+          method: "Mean normalized innovation < 2"
+          
+        - factor: "bias_stability"
+          description: "Are bias estimates stable?"
+          method: "Bias drift rate < threshold"
+          
+        - factor: "gps_imu_agreement"
+          description: "Do sensors agree?"
+          method: "RMS velocity difference < 0.5 m/s"
+          
+    # Track confidence
+    track_confidence:
+      formula: "method_1_confidence × fusion_confidence"
+      maximum_achievable: 0.92            # Method 3 ceiling
+
+# =============================================================================
+# SECTION 5: ADVANCED MODE - TRACK WIDTH ESTIMATION
+# =============================================================================
+# Estimate track width from dedicated edge passes.
+# This is OPTIONAL and requires specific data collection.
+
+advanced_width_estimation:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 OVERVIEW
+  # ---------------------------------------------------------------------------
+  overview:
+    
+    description: |
+      Track width estimation requires the driver to complete passes along
+      the left edge and right edge of the track. From these edge passes
+      plus the racing line (centerline), we can estimate track width at
+      each point.
+      
+    requirements:
+      minimum_left_edge_laps: 2
+      minimum_right_edge_laps: 2
+      centerline_required: true           # From Methods 1-3
+      
+    output:
+      - left_edge: "Left boundary polyline"
+      - right_edge: "Right boundary polyline"
+      - width_m: "Track width at each centerline point"
+      - derived_centerline: "Geometric center (may differ from racing line)"
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 EDGE PASS RECORDING
+  # ---------------------------------------------------------------------------
+  edge_recording:
+    
+    instructions_to_driver: |
+      For LEFT edge pass:
+        - Position vehicle with LEFT wheels as close to track edge as safe
+        - Maintain this position for entire lap
+        - Drive at moderate, consistent speed
+        
+      For RIGHT edge pass:
+        - Position vehicle with RIGHT wheels as close to track edge as safe
+        - Maintain this position for entire lap
+        - Drive at moderate, consistent speed
+        
+    validation:
+      
+      - check: "edge_inside_racing_line"
+        description: "Edge pass should be inside (shorter) than racing line"
+        tolerance_percent: 5              # May be slightly longer in chicanes
+        
+      - check: "edge_consistency"
+        description: "Multiple edge passes should agree"
+        max_deviation_m: 2
+        
+      - check: "edge_outside_centerline"
+        description: "Left edge should be left of centerline (and vice versa)"
+        
+  # ---------------------------------------------------------------------------
+  # 5.3 EDGE ALIGNMENT
+  # ---------------------------------------------------------------------------
+  edge_alignment:
+    
+    description: |
+      Align edge passes to centerline distance reference.
+      Each edge pass point maps to a corresponding centerline distance.
+      
+    method: "Perpendicular projection"
+    
+    process:
+      - step: "For each point on edge pass"
+      - step: "Find nearest point on centerline"
+      - step: "Project perpendicularly to centerline"
+      - step: "Record lateral offset and centerline distance"
+      
+    output:
+      format: "Array of (distance_m, lateral_offset_m) pairs"
+      convention: "Positive offset = left of centerline"
+      
+  # ---------------------------------------------------------------------------
+  # 5.4 WIDTH COMPUTATION
+  # ---------------------------------------------------------------------------
+  width_computation:
+    
+    method: "Left offset + Right offset + vehicle width adjustment"
+    
+    process:
+      
+      - step: "align_left_edges"
+        description: "Average multiple left edge passes"
+        method: "Median offset at each distance"
+        
+      - step: "align_right_edges"
+        description: "Average multiple right edge passes"
+        method: "Median offset at each distance"
+        
+      - step: "compute_raw_width"
+        formula: "width = left_offset - right_offset"
+        note: "Right offset is negative (right of centerline)"
+        
+      - step: "add_vehicle_correction"
+        description: "Edge pass is vehicle center, not wheels"
+        correction_m: 1.0                 # Half vehicle width each side
+        
+      - step: "smooth_width"
+        description: "Remove measurement noise"
+        method: "Moving median, window = 20m"
+        
+    validation:
+      minimum_width_m: 6                  # Narrower = suspicious
+      maximum_width_m: 25                 # Wider = suspicious
+      max_width_change_m_per_m: 0.5       # Gradual changes only
+      
+  # ---------------------------------------------------------------------------
+  # 5.5 CENTERLINE DERIVATION
+  # ---------------------------------------------------------------------------
+  centerline_derivation:
+    
+    description: |
+      Compute the true geometric centerline from edges.
+      This may differ from the racing line (Methods 1-3 centerline).
+      
+    method: "Midpoint of left and right edges"
+    
+    process:
+      - step: "At each distance along racing line centerline"
+      - step: "left_pos = centerline_point + left_offset × perpendicular"
+      - step: "right_pos = centerline_point + right_offset × perpendicular"
+      - step: "geometric_center = (left_pos + right_pos) / 2"
+      
+    output:
+      geometric_centerline: "True center of track"
+      centerline_offset: "Offset from racing line to geometric center"
+      
+    usage:
+      track_limits: "Use geometric centerline for boundary calculations"
+      coaching: "Continue using racing line centerline for advice"
+      
+  # ---------------------------------------------------------------------------
+  # 5.6 CONFIDENCE SCORING
+  # ---------------------------------------------------------------------------
+  confidence_scoring:
+    
+    width_confidence:
+      
+      factors:
+        - factor: "edge_lap_count"
+          scoring:
+            2_laps: 0.70
+            3_laps: 0.80
+            4_plus_laps: 0.90
+            
+        - factor: "edge_agreement"
+          description: "How well do edge laps agree?"
+          method: "1 / (1 + std_dev_m)"
+          
+        - factor: "width_plausibility"
+          description: "Is width within expected range?"
+          method: "1.0 if 8-20m, reduce otherwise"
+          
+    segment_confidence: "Minimum of point confidences in segment"
+
+# =============================================================================
+# SECTION 6: SMOOTHING RULES
+# =============================================================================
+# Smoothing removes noise while preserving geometry.
+
+smoothing_rules:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 POSITION SMOOTHING
+  # ---------------------------------------------------------------------------
+  position_smoothing:
+    
+    # Primary method: Savitzky-Golay filter
+    method: "Savitzky-Golay"
+    
+    parameters:
+      window_points: 11                   # 11 points = 10m at 1m resolution
+      polynomial_order: 3                 # Cubic
+      
+    rationale: |
+      Savitzky-Golay preserves peaks and troughs better than moving average.
+      This is critical for hairpins and chicanes where position changes rapidly.
+      
+    constraints:
+      minimum_corner_radius_preserved_m: 10  # Don't over-smooth tight corners
+      maximum_deviation_from_raw_m: 3         # Don't move too far from data
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 CURVATURE SMOOTHING
+  # ---------------------------------------------------------------------------
+  curvature_smoothing:
+    
+    description: |
+      Curvature is noisy because it's a second derivative of position.
+      Additional smoothing is required.
+      
+    method: "Two-stage smoothing"
+    
+    stage_1:
+      type: "Median filter"
+      window_m: 5
+      purpose: "Remove spikes"
+      
+    stage_2:
+      type: "Gaussian filter"
+      sigma_m: 3
+      purpose: "Smooth remaining noise"
+      
+    constraints:
+      preserve_sign_changes: true         # Don't smooth out direction changes
+      minimum_curvature_preserved: 0.002  # 500m radius minimum
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 HEADING SMOOTHING
+  # ---------------------------------------------------------------------------
+  heading_smoothing:
+    
+    method: "Circular mean with unwrapping"
+    
+    process:
+      - step: "Unwrap heading to avoid 360°/0° discontinuity"
+      - step: "Apply Savitzky-Golay filter"
+      - step: "Rewrap to 0-360° range"
+      
+    parameters:
+      window_points: 7
+      polynomial_order: 2
+      
+  # ---------------------------------------------------------------------------
+  # 6.4 ADAPTIVE SMOOTHING
+  # ---------------------------------------------------------------------------
+  adaptive_smoothing:
+    
+    description: |
+      Smoothing amount varies based on local geometry and data quality.
+      Smooth more where data is noisy, less where geometry changes rapidly.
+      
+    adaptation_factors:
+      
+      - factor: "curvature_magnitude"
+        description: "Smooth less in tight corners"
+        scaling: "window = base_window / (1 + 10 × |κ|)"
+        
+      - factor: "point_confidence"
+        description: "Smooth more where confidence is low"
+        scaling: "window = base_window × (2 - confidence)"
+        
+      - factor: "sample_density"
+        description: "Smooth more where samples are sparse"
+        scaling: "Adjust based on local point density"
+
+# =============================================================================
+# SECTION 7: DRIFT CORRECTION
+# =============================================================================
+# Correct systematic errors that cause the track to not close properly.
+
+drift_correction:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 LOOP CLOSURE
+  # ---------------------------------------------------------------------------
+  loop_closure:
+    
+    description: |
+      A closed circuit should have zero net displacement over a lap.
+      GPS drift causes the path to not close. This must be corrected.
+      
+    detection:
+      closure_error: "Distance from last point to first point"
+      heading_error: "Heading at end vs heading at start"
+      
+      acceptable_closure_m: 5             # <5m = minor, correct silently
+      warning_closure_m: 20               # 5-20m = correct with warning
+      abort_closure_m: 50                 # >50m = data quality too poor
+      
+    correction:
+      method: "Distribute error linearly along path"
+      
+      process:
+        - step: "Compute closure error vector (dx, dy)"
+        - step: "At each point i with distance d_i from start"
+        - step: "correction_i = (d_i / total_length) × error_vector"
+        - step: "Apply correction to point i"
+        
+      constraints:
+        preserve_shape: true              # Don't distort geometry
+        maximum_correction_m: 30          # Abort if correction too large
+        
+  # ---------------------------------------------------------------------------
+  # 7.2 INTER-LAP DRIFT CORRECTION
+  # ---------------------------------------------------------------------------
+  inter_lap_drift:
+    
+    description: |
+      GPS drift causes laps recorded at different times to not overlay.
+      This drift must be removed before laps can be averaged.
+      
+    detection:
+      method: "Compare start/finish positions across laps"
+      expected_variation_m: 5-20          # Depending on session duration
+      
+    correction:
+      method: "Per-lap offset removal"
+      
+      process:
+        - step: "Compute centroid of each lap"
+        - step: "Compute mean centroid across all laps"
+        - step: "Translate each lap so its centroid matches mean"
+        
+  # ---------------------------------------------------------------------------
+  # 7.3 SYSTEMATIC OFFSET DETECTION
+  # ---------------------------------------------------------------------------
+  systematic_offset:
+    
+    description: |
+      Some sections may have consistent offsets (e.g., near buildings
+      causing multipath). Detect and flag these.
+      
+    detection:
+      method: "Compute per-segment offset across laps"
+      
+      segments: "Track divided into 100m segments"
+      
+      per_segment:
+        compute: "Mean and std dev of position across laps"
+        high_variance_threshold_m: 8
+        
+    action:
+      if_high_variance:
+        - "Flag segment as low confidence"
+        - "Use reference map if available (Method 2)"
+        - "Increase smoothing in segment"
+
+# =============================================================================
+# SECTION 8: SEGMENTATION
+# =============================================================================
+# Divide track into logical segments (straights, corners).
+
+segmentation:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 SEGMENT TYPES
+  # ---------------------------------------------------------------------------
+  segment_types:
+    
+    - type: "straight"
+      definition: "|κ| < 0.005 (radius > 200m)"
+      minimum_length_m: 50
+      
+    - type: "corner"
+      definition: "|κ| >= 0.005"
+      sub_types:
+        fast: "|κ| < 0.01 (radius > 100m)"
+        medium: "0.01 <= |κ| < 0.02 (50-100m radius)"
+        slow: "0.02 <= |κ| < 0.05 (20-50m radius)"
+        hairpin: "|κ| >= 0.05 (radius < 20m)"
+        
+    - type: "chicane"
+      definition: "Two or more corners in opposite directions, <50m apart"
+      
+    - type: "transition"
+      definition: "Short segment between straight and corner"
+      typical_length_m: 20-50
+      
+  # ---------------------------------------------------------------------------
+  # 8.2 SEGMENTATION ALGORITHM
+  # ---------------------------------------------------------------------------
+  segmentation_algorithm:
+    
+    method: "Curvature-based with hysteresis"
+    
+    process:
+      
+      - step: "compute_curvature"
+        description: "Curvature at each centerline point"
+        
+      - step: "classify_points"
+        description: "Label each point as straight/corner"
+        threshold: 0.005
+        hysteresis: 0.002                 # Prevent rapid switching
+        
+      - step: "merge_short_segments"
+        description: "Absorb very short segments into neighbors"
+        minimum_length_m: 20
+        
+      - step: "identify_corners"
+        description: "Name corners by apex position"
+        
+      - step: "identify_chicanes"
+        description: "Detect corner pairs that form chicanes"
+        
+    output:
+      segments:
+        - segment_id
+        - type
+        - start_distance_m
+        - end_distance_m
+        - length_m
+        - average_curvature
+        - max_curvature
+        - direction: "LEFT/RIGHT/STRAIGHT"
+        - confidence
+        
+  # ---------------------------------------------------------------------------
+  # 8.3 SEGMENT NAMING
+  # ---------------------------------------------------------------------------
+  segment_naming:
+    
+    method: "Sequential numbering with type prefix"
+    
+    format:
+      straights: "S1, S2, S3, ..."
+      corners: "T1, T2, T3, ..."          # T for Turn
+      
+    alternative:
+      if_track_name_known: "Use official corner names if available"
+      source: "Track database or user configuration"
+
+# =============================================================================
+# SECTION 9: ABORT CONDITIONS
+# =============================================================================
+# Conditions under which track creation must be aborted.
+
+abort_conditions:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 DATA QUALITY ABORTS
+  # ---------------------------------------------------------------------------
+  data_quality:
+    
+    - condition: "Fewer than 3 valid laps available"
+      action: "ABORT"
+      message: "Insufficient data. At least 3 complete laps required."
+      
+    - condition: "All laps rejected by quality filter"
+      action: "ABORT"
+      message: "All recorded laps have quality issues."
+      
+    - condition: "Average HDOP > 3.0 across all laps"
+      action: "ABORT"
+      message: "GPS quality too poor for track creation."
+      
+    - condition: "Lap length variation > 10%"
+      action: "ABORT"
+      message: "Lap lengths inconsistent. May be recording errors."
+      
+  # ---------------------------------------------------------------------------
+  # 9.2 GEOMETRY ABORTS
+  # ---------------------------------------------------------------------------
+  geometry:
+    
+    - condition: "Track does not close (closure error > 50m)"
+      action: "ABORT"
+      message: "Track geometry does not form closed loop."
+      
+    - condition: "Track length outside valid range"
+      range: "[400m, 30000m]"
+      action: "ABORT"
+      message: "Track length outside supported range."
+      
+    - condition: "Self-intersection detected"
+      action: "ABORT"
+      message: "Track geometry self-intersects."
+      
+    - condition: "Curvature exceeds physical limits"
+      limit: "0.2 (5m radius)"
+      action: "ABORT"
+      message: "Detected impossibly tight corner. Data error likely."
+      
+  # ---------------------------------------------------------------------------
+  # 9.3 ALIGNMENT ABORTS
+  # ---------------------------------------------------------------------------
+  alignment:
+    
+    - condition: "Cannot align laps (ICP does not converge)"
+      action: "ABORT"
+      message: "Laps cannot be aligned. Track may have changed."
+      
+    - condition: "Reference map does not match driven data"
+      threshold: "Alignment error > 30m"
+      action: "ABORT"
+      message: "Reference map does not match circuit."
+      
+    - condition: "Features cannot be matched (Method 2)"
+      action: "DOWNGRADE_TO_METHOD_1"
+      alternative: "If Method 1 also fails, ABORT"
+      
+  # ---------------------------------------------------------------------------
+  # 9.4 CONFIDENCE ABORTS
+  # ---------------------------------------------------------------------------
+  confidence:
+    
+    - condition: "Track confidence < 0.50"
+      action: "ABORT"
+      message: "Track geometry confidence too low for safe use."
+      
+    - condition: ">20% of segments have confidence < 0.60"
+      action: "ABORT"
+      message: "Too many low-confidence track segments."
+      
+  # ---------------------------------------------------------------------------
+  # 9.5 ABORT RECOVERY
+  # ---------------------------------------------------------------------------
+  recovery:
+    
+    on_abort:
+      - "Log detailed failure reason"
+      - "Preserve raw data for later retry"
+      - "Suggest corrective actions to user"
+      
+    corrective_suggestions:
+      poor_gps: "Try recording laps in better GPS conditions"
+      closure_error: "Ensure complete laps crossing start/finish"
+      inconsistent_laps: "Drive more consistent laps"
+      map_mismatch: "Verify correct track selected"
+
+# =============================================================================
+# SECTION 10: OUTPUT FORMAT
+# =============================================================================
+# Final track geometry format.
+
+output_format:
+
+  # ---------------------------------------------------------------------------
+  # 10.1 TRACK METADATA
+  # ---------------------------------------------------------------------------
+  metadata:
+    track_id: "UUID"
+    track_name: "String or null"
+    creation_timestamp: "ISO 8601"
+    creation_method: "1, 2, or 3"
+    
+    geometry_stats:
+      total_length_m: "Float"
+      num_corners: "Integer"
+      num_straights: "Integer"
+      longest_straight_m: "Float"
+      tightest_corner_radius_m: "Float"
+      
+    confidence:
+      overall: "Float [0, 1]"
+      method_ceiling: "Float"             # Method-specific maximum
+      segments_below_threshold: "Integer"
+      
+    source_data:
+      num_laps_used: "Integer"
+      num_laps_rejected: "Integer"
+      reference_map_used: "Boolean"
+      imu_fusion_used: "Boolean"
+      width_estimation_used: "Boolean"
+      
+  # ---------------------------------------------------------------------------
+  # 10.2 CENTERLINE
+  # ---------------------------------------------------------------------------
+  centerline:
+    
+    format: "Array of points"
+    resolution_m: 1.0
+    
+    per_point:
+      distance_m: "Cumulative distance from start"
+      latitude_deg: "WGS84 latitude"
+      longitude_deg: "WGS84 longitude"
+      x_m: "Local X (East positive)"
+      y_m: "Local Y (North positive)"
+      heading_deg: "True heading [0, 360)"
+      curvature_1_per_m: "Signed curvature"
+      gradient_percent: "Track gradient (if available)"
+      confidence: "Point confidence [0, 1]"
+      
+  # ---------------------------------------------------------------------------
+  # 10.3 SEGMENTS
+  # ---------------------------------------------------------------------------
+  segments:
+    
+    format: "Array of segments"
+    
+    per_segment:
+      segment_id: "Integer"
+      name: "String (e.g., 'T1', 'S2')"
+      type: "STRAIGHT | CORNER | CHICANE | TRANSITION"
+      direction: "LEFT | RIGHT | STRAIGHT"
+      
+      bounds:
+        start_distance_m: "Float"
+        end_distance_m: "Float"
+        length_m: "Float"
+        
+      geometry:
+        average_curvature: "Float"
+        max_curvature: "Float"
+        min_radius_m: "Float"
+        entry_heading_deg: "Float"
+        exit_heading_deg: "Float"
+        
+      confidence: "Segment confidence [0, 1]"
+      
+  # ---------------------------------------------------------------------------
+  # 10.4 BOUNDARIES (if advanced mode used)
+  # ---------------------------------------------------------------------------
+  boundaries:
+    
+    available: "Boolean"
+    
+    left_edge:
+      format: "Array of (distance_m, x_m, y_m)"
+      confidence: "Float"
+      
+    right_edge:
+      format: "Array of (distance_m, x_m, y_m)"
+      confidence: "Float"
+      
+    width:
+      format: "Array of (distance_m, width_m)"
+      average_width_m: "Float"
+      min_width_m: "Float"
+      max_width_m: "Float"
+
+# =============================================================================
+# END OF TRACK CREATION PIPELINE
+# =============================================================================
+#
+# CERTIFICATION STATEMENT:
+# This pipeline creates track geometry with conservative confidence scoring.
+# All methods are designed to fail safely rather than produce bad geometry.
+# Geometry confidence directly affects downstream system behavior:
+# - High confidence (>0.85): Full coaching
+# - Medium confidence (0.70-0.85): Reduced coaching
+# - Low confidence (<0.70): Recording only
+#
+# Track geometry errors propagate to all coaching advice.
+# Therefore, geometry creation prioritizes accuracy over completeness.
+#
+# =============================================================================
