@@ -1,0 +1,366 @@
+# Voice Phrase Dictionary
+# Safety-Critical Adaptive AI Race Coaching System
+#
+# CRITICAL: All voice output MUST come from this dictionary.
+# No dynamic text generation is permitted.
+# Each phrase is designed to be:
+#   - Short (under 3 seconds spoken)
+#   - Unambiguous
+#   - Non-pressuring
+#   - Race-engineer style (calm, factual)
+
+version: "1.0"
+revision_date: "2026-02-02"
+
+# =============================================================================
+# PHRASE DICTIONARY
+# =============================================================================
+
+phrases:
+  # -------------------------------------------------------------------------
+  # BRAKING CUES
+  # -------------------------------------------------------------------------
+  braking:
+    brake_earlier:
+      key: "BRAKE_EARLIER"
+      text: "Brake earlier"
+      priority: 2
+      allowed_phases: ["approach"]
+      
+    brake_now:
+      key: "BRAKE_NOW"
+      text: "Brake"
+      priority: 1
+      allowed_phases: ["approach", "entry"]
+      
+    trail_brake:
+      key: "TRAIL_BRAKE"
+      text: "Trail brake"
+      priority: 3
+      allowed_phases: ["entry"]
+      
+    brake_lighter:
+      key: "BRAKE_LIGHTER"
+      text: "Lighter braking"
+      priority: 3
+      allowed_phases: ["approach"]
+      
+  # -------------------------------------------------------------------------
+  # STEERING CUES
+  # -------------------------------------------------------------------------
+  steering:
+    smooth_inputs:
+      key: "SMOOTH_INPUTS"
+      text: "Smooth inputs"
+      priority: 2
+      allowed_phases: ["entry", "exit"]
+      
+    open_steering:
+      key: "OPEN_STEERING"
+      text: "Open steering"
+      priority: 3
+      allowed_phases: ["exit"]
+      
+    hold_line:
+      key: "HOLD_LINE"
+      text: "Hold line"
+      priority: 2
+      allowed_phases: ["apex", "exit"]
+      note: "Only used if driver is already stable"
+      
+  # -------------------------------------------------------------------------
+  # SPEED CUES
+  # -------------------------------------------------------------------------
+  speed:
+    entry_speed_high:
+      key: "ENTRY_SPEED_HIGH"
+      text: "Entry speed"
+      priority: 2
+      allowed_phases: ["approach"]
+      
+    slow_in:
+      key: "SLOW_IN"
+      text: "Slow in"
+      priority: 2
+      allowed_phases: ["approach"]
+      
+    carry_speed:
+      key: "CARRY_SPEED"
+      text: "Carry speed"
+      priority: 3
+      allowed_phases: ["exit"]
+      
+  # -------------------------------------------------------------------------
+  # THROTTLE CUES
+  # -------------------------------------------------------------------------
+  throttle:
+    power:
+      key: "POWER"
+      text: "Power"
+      priority: 3
+      allowed_phases: ["exit"]
+      
+    easy_throttle:
+      key: "EASY_THROTTLE"
+      text: "Easy throttle"
+      priority: 2
+      allowed_phases: ["exit"]
+      
+    wait_throttle:
+      key: "WAIT_THROTTLE"
+      text: "Wait for throttle"
+      priority: 2
+      allowed_phases: ["apex"]
+      
+  # -------------------------------------------------------------------------
+  # CRITICAL WARNINGS (May interrupt)
+  # -------------------------------------------------------------------------
+  warnings:
+    instability:
+      key: "INSTABILITY"
+      text: "Careful"
+      priority: 0  # Highest priority
+      allowed_phases: ["approach", "entry", "apex", "exit"]
+      may_interrupt: true
+      
+    limit:
+      key: "LIMIT"
+      text: "Limit"
+      priority: 0
+      allowed_phases: ["approach", "entry", "apex", "exit"]
+      may_interrupt: true
+      
+    surface:
+      key: "SURFACE"
+      text: "Surface"
+      priority: 1
+      allowed_phases: ["approach"]
+      
+  # -------------------------------------------------------------------------
+  # CORNER IDENTIFICATION
+  # -------------------------------------------------------------------------
+  corners:
+    turn_1:
+      key: "TURN_1"
+      text: "Turn one"
+      priority: 4
+      allowed_phases: ["straight"]
+      
+    turn_2:
+      key: "TURN_2"
+      text: "Turn two"
+      priority: 4
+      allowed_phases: ["straight"]
+      
+    turn_3:
+      key: "TURN_3"
+      text: "Turn three"
+      priority: 4
+      allowed_phases: ["straight"]
+      
+    # ... turns 4-20 follow same pattern
+    
+    hairpin:
+      key: "HAIRPIN"
+      text: "Hairpin"
+      priority: 4
+      allowed_phases: ["straight"]
+      
+    chicane:
+      key: "CHICANE"
+      text: "Chicane"
+      priority: 4
+      allowed_phases: ["straight"]
+      
+    esses:
+      key: "ESSES"
+      text: "Esses"
+      priority: 4
+      allowed_phases: ["straight"]
+      
+  # -------------------------------------------------------------------------
+  # DISTANCE MARKERS
+  # -------------------------------------------------------------------------
+  distance:
+    fifty_meters:
+      key: "FIFTY_M"
+      text: "Fifty"
+      priority: 3
+      allowed_phases: ["straight", "approach"]
+      
+    one_hundred_meters:
+      key: "HUNDRED_M"
+      text: "Hundred"
+      priority: 3
+      allowed_phases: ["straight", "approach"]
+      
+    two_hundred_meters:
+      key: "TWO_HUNDRED_M"
+      text: "Two hundred"
+      priority: 4
+      allowed_phases: ["straight"]
+      
+  # -------------------------------------------------------------------------
+  # POST-LAP SUMMARY (Non-real-time)
+  # -------------------------------------------------------------------------
+  post_lap:
+    good_lap:
+      key: "GOOD_LAP"
+      text: "Good lap"
+      priority: 5
+      allowed_phases: ["pit", "cooldown"]
+      
+    personal_best:
+      key: "PERSONAL_BEST"
+      text: "Personal best"
+      priority: 5
+      allowed_phases: ["pit", "cooldown"]
+      
+    consistent:
+      key: "CONSISTENT"
+      text: "Consistent"
+      priority: 5
+      allowed_phases: ["pit", "cooldown"]
+      
+    braking_improved:
+      key: "BRAKING_IMPROVED"
+      text: "Braking improved"
+      priority: 5
+      allowed_phases: ["pit", "cooldown"]
+      
+    entry_speed_improved:
+      key: "ENTRY_IMPROVED"
+      text: "Entry speed improved"
+      priority: 5
+      allowed_phases: ["pit", "cooldown"]
+      
+  # -------------------------------------------------------------------------
+  # SYSTEM STATUS
+  # -------------------------------------------------------------------------
+  system:
+    system_ready:
+      key: "SYSTEM_READY"
+      text: "System ready"
+      priority: 5
+      allowed_phases: ["pit"]
+      
+    recording:
+      key: "RECORDING"
+      text: "Recording"
+      priority: 5
+      allowed_phases: ["pit"]
+      
+    lap_recorded:
+      key: "LAP_RECORDED"
+      text: "Lap recorded"
+      priority: 5
+      allowed_phases: ["straight", "pit"]
+      
+    low_confidence:
+      key: "LOW_CONFIDENCE"
+      text: "Low confidence"
+      priority: 4
+      allowed_phases: ["pit"]
+      
+    system_silent:
+      key: "SYSTEM_SILENT"
+      text: "Going silent"
+      priority: 4
+      allowed_phases: ["pit", "straight"]
+
+# =============================================================================
+# PRIORITY DEFINITIONS
+# =============================================================================
+
+priority_levels:
+  0:
+    name: "critical"
+    description: "Safety-critical warning - may interrupt"
+    may_interrupt: true
+    
+  1:
+    name: "urgent"
+    description: "Time-sensitive guidance"
+    may_interrupt: false
+    
+  2:
+    name: "important"
+    description: "Key driving advice"
+    may_interrupt: false
+    
+  3:
+    name: "helpful"
+    description: "Optimization suggestion"
+    may_interrupt: false
+    
+  4:
+    name: "informational"
+    description: "Context and awareness"
+    may_interrupt: false
+    
+  5:
+    name: "background"
+    description: "Non-driving information"
+    may_interrupt: false
+
+# =============================================================================
+# PHASE DEFINITIONS
+# =============================================================================
+
+corner_phases:
+  straight:
+    description: "On straight, no corner imminent"
+    voice_permitted: true
+    max_duration_s: 3.0
+    
+  approach:
+    description: "Approaching corner, 50-200m out"
+    voice_permitted: true
+    max_duration_s: 2.0
+    
+  entry:
+    description: "Turn-in to apex"
+    voice_permitted: true
+    restricted: true
+    max_duration_s: 1.0
+    
+  apex:
+    description: "At or near apex"
+    voice_permitted: false
+    exception_priority: 0  # Only critical warnings
+    
+  exit:
+    description: "Apex to track-out"
+    voice_permitted: true
+    restricted: true
+    max_duration_s: 1.5
+    
+  pit:
+    description: "In pit lane or stationary"
+    voice_permitted: true
+    max_duration_s: 5.0
+    
+  cooldown:
+    description: "Cooldown lap"
+    voice_permitted: true
+    max_duration_s: 5.0
+
+# =============================================================================
+# FORBIDDEN CONTENT
+# =============================================================================
+
+forbidden:
+  # These types of phrases are explicitly FORBIDDEN
+  - "Push harder"
+  - "You can go faster"
+  - "Attack"
+  - "Send it"
+  - "Full throttle"
+  - "Don't lift"
+  - Any phrase pressuring driver to exceed comfort
+  - Any phrase suggesting driver should take more risk
+  - Any dynamically generated text
+  - Any phrase longer than 3 seconds
+  - Any phrase with complex sentence structure
+  - Any conversational or chatty phrases
+  - Any emotionally manipulative phrases

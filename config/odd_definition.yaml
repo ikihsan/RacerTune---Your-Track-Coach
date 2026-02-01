@@ -1,0 +1,269 @@
+# Operational Design Domain (ODD) Definition
+# Safety-Critical Adaptive AI Race Coaching System
+#
+# This file defines the explicit boundaries within which the system operates.
+# Operation outside these boundaries triggers degradation or shutdown.
+
+version: "1.0"
+revision_date: "2026-02-02"
+
+# =============================================================================
+# OPERATIONAL BOUNDARIES
+# =============================================================================
+
+operational_boundaries:
+  # Track Type Constraints
+  track:
+    type: "closed_circuit_only"
+    allowed_surfaces:
+      - "asphalt"
+      - "concrete"
+    forbidden_surfaces:
+      - "gravel"
+      - "dirt"
+      - "snow"
+      - "ice"
+    minimum_track_length_m: 500
+    maximum_track_length_m: 25000
+    minimum_corner_radius_m: 10
+    
+  # Environmental Constraints
+  environment:
+    allowed_conditions:
+      - "dry"
+    forbidden_conditions:
+      - "wet"
+      - "damp"
+      - "standing_water"
+      - "fog"
+      - "snow"
+      - "ice"
+    # Note: Future versions may support wet conditions with separate envelopes
+    
+  # Speed Constraints
+  speed:
+    minimum_operational_speed_kmh: 30
+    maximum_supported_speed_kmh: 350
+    # Below minimum: system silent (parking/pit)
+    # Above maximum: system enters degraded mode
+    
+  # Vehicle Type
+  vehicle:
+    supported_types:
+      - "car_closed_wheel"
+      - "car_open_wheel"
+    unsupported_types:
+      - "motorcycle"  # Requires separate physics model
+      - "kart"        # Different dynamics
+    # Motorcycle support requires explicit separate ODD definition
+
+# =============================================================================
+# SENSOR REQUIREMENTS
+# =============================================================================
+
+sensor_requirements:
+  gps:
+    minimum_update_rate_hz: 5
+    preferred_update_rate_hz: 10
+    maximum_acceptable_hdop: 2.0
+    minimum_satellites: 6
+    required_fix_type: "3D"
+    dropout_tolerance_seconds: 2.0
+    
+  imu:
+    minimum_update_rate_hz: 50
+    preferred_update_rate_hz: 100
+    accelerometer_range_g: 8
+    gyroscope_range_dps: 500
+    required_axes: ["x", "y", "z"]
+    
+  mounting:
+    stability_required: true
+    orientation_calibration_required: true
+    maximum_orientation_drift_deg: 5
+    vibration_filtering_required: true
+
+# =============================================================================
+# CONFIDENCE THRESHOLDS
+# =============================================================================
+
+confidence_thresholds:
+  # Minimum confidence for various operations
+  track_geometry:
+    minimum_for_operation: 0.7
+    minimum_for_voice_advice: 0.85
+    
+  sensor_fusion:
+    minimum_gps_confidence: 0.6
+    minimum_imu_confidence: 0.7
+    fusion_disagreement_threshold: 0.3
+    
+  physics_envelope:
+    minimum_for_envelope_use: 0.8
+    minimum_for_learning_contribution: 0.9
+    
+  voice_output:
+    minimum_confidence_to_speak: 0.85
+    suppress_below_confidence: 0.7
+
+# =============================================================================
+# DEGRADATION LEVELS
+# =============================================================================
+
+degradation_levels:
+  # Level 0: Full Operation
+  level_0_full:
+    description: "All systems nominal"
+    voice_enabled: true
+    learning_enabled: true
+    envelope_advisory: true
+    
+  # Level 1: Reduced Voice
+  level_1_reduced_voice:
+    description: "Reduced confidence - minimal voice"
+    voice_enabled: true
+    voice_restricted_to: ["critical_warnings"]
+    learning_enabled: false
+    envelope_advisory: true
+    triggers:
+      - "gps_confidence_below_0.7"
+      - "imu_confidence_below_0.8"
+      
+  # Level 2: Silent Advisory
+  level_2_silent:
+    description: "Low confidence - voice disabled"
+    voice_enabled: false
+    learning_enabled: false
+    envelope_advisory: true
+    post_lap_analysis: true
+    triggers:
+      - "gps_confidence_below_0.5"
+      - "sensor_disagreement_detected"
+      - "track_geometry_confidence_below_0.6"
+      
+  # Level 3: Recording Only
+  level_3_recording:
+    description: "Very low confidence - data recording only"
+    voice_enabled: false
+    learning_enabled: false
+    envelope_advisory: false
+    data_recording: true
+    triggers:
+      - "gps_dropout_extended"
+      - "imu_saturation_detected"
+      - "outside_operational_boundaries"
+      
+  # Level 4: Shutdown
+  level_4_shutdown:
+    description: "System cannot operate safely"
+    all_functions_disabled: true
+    triggers:
+      - "sensor_failure_detected"
+      - "runtime_integrity_violation"
+      - "safety_invariant_violation"
+
+# =============================================================================
+# VOICE TIMING CONSTRAINTS
+# =============================================================================
+
+voice_timing:
+  # Minimum time between voice outputs
+  minimum_interval_seconds: 3.0
+  
+  # Maximum messages per lap (prevents annoyance)
+  maximum_messages_per_lap: 10
+  
+  # Corner phase restrictions
+  corner_phases:
+    approach:
+      voice_allowed: true
+      max_messages: 1
+    entry:
+      voice_allowed: true
+      restricted_to: ["critical"]
+    apex:
+      voice_allowed: false
+      exception: "instability_warning"
+    exit:
+      voice_allowed: true
+      restricted_to: ["encouragement", "summary"]
+    straight:
+      voice_allowed: true
+      max_messages: 2
+
+# =============================================================================
+# LEARNING CONSTRAINTS
+# =============================================================================
+
+learning_constraints:
+  # Adaptive Envelope Refinement (AER) settings
+  aer:
+    minimum_laps_before_learning: 3
+    minimum_clean_laps_for_blend: 5
+    maximum_blend_weight: 0.3  # Physics always dominates
+    
+    # Confidence gating
+    minimum_confidence_for_learning: 0.9
+    disable_learning_below_confidence: 0.7
+    
+    # Decay settings
+    decay_half_life_laps: 20
+    decay_on_condition_change: true
+    
+    # Segment granularity
+    minimum_segment_length_m: 20
+    maximum_segment_length_m: 100
+    
+    # Outlier rejection
+    outlier_percentile_low: 10
+    outlier_percentile_high: 90
+
+# =============================================================================
+# FAILURE RESPONSE
+# =============================================================================
+
+failure_responses:
+  gps_dropout:
+    action: "degrade_to_imu_only"
+    duration_limit_seconds: 5
+    fallback: "level_2_silent"
+    
+  imu_saturation:
+    action: "flag_data_invalid"
+    recovery: "wait_for_stable_readings"
+    fallback: "level_3_recording"
+    
+  sensor_disagreement:
+    action: "use_lower_estimate"
+    confidence_reduction: 0.3
+    logging: "detailed"
+    
+  voice_engine_failure:
+    action: "continue_silent"
+    post_lap_notification: true
+    
+  runtime_overload:
+    action: "shed_non_critical"
+    priority_order:
+      - "telemetry"  # Highest priority
+      - "physics"
+      - "voice"
+      - "ui"         # Lowest priority - shed first
+
+# =============================================================================
+# PHYSICS DEFAULTS
+# =============================================================================
+
+physics_defaults:
+  # Conservative defaults - actual values from vehicle config
+  tire_friction_coefficient: 1.0  # Dry road tire
+  safety_margin_factor: 0.85      # 15% safety margin
+  reaction_time_seconds: 0.3      # Human reaction time
+  
+  # Braking assumptions (conservative)
+  max_deceleration_g: 1.0
+  braking_efficiency: 0.9
+  
+  # Steering assumptions
+  max_lateral_g: 1.2
+  steering_response_delay_ms: 100

@@ -1,0 +1,215 @@
+# Physics Constants Configuration
+# Safety-Critical Adaptive AI Race Coaching System
+#
+# These values represent CONSERVATIVE defaults.
+# Actual vehicle-specific values should be measured and validated.
+
+version: "1.0"
+
+# =============================================================================
+# FUNDAMENTAL CONSTANTS
+# =============================================================================
+
+constants:
+  gravity_m_s2: 9.81
+  
+# =============================================================================
+# TIRE MODEL PARAMETERS
+# =============================================================================
+
+tire_model:
+  # Simplified tire model for controllability estimation
+  # NOT for optimal lap time - for SAFE controllability
+  
+  # Peak friction coefficient (dry conditions)
+  peak_friction_mu:
+    conservative: 0.9
+    typical_road_tire: 1.0
+    performance_tire: 1.2
+    racing_slick: 1.5
+    default: 1.0
+    
+  # Friction circle parameters
+  friction_circle:
+    # Combined grip reduction factor
+    # When combining braking and cornering, total grip is reduced
+    combined_grip_factor: 0.95
+    
+  # Tire load sensitivity
+  load_sensitivity:
+    # Grip reduces as load increases (simplified)
+    reference_load_n: 4000
+    sensitivity_factor: 0.1  # 10% reduction per doubling of load
+    
+  # Safety margins applied to tire limits
+  safety_margins:
+    longitudinal: 0.85  # 15% margin on braking/acceleration
+    lateral: 0.80       # 20% margin on cornering
+    combined: 0.75      # 25% margin when combined
+
+# =============================================================================
+# BRAKING MODEL PARAMETERS
+# =============================================================================
+
+braking_model:
+  # Maximum sustainable deceleration
+  max_deceleration:
+    conservative_g: 0.8
+    typical_car_g: 1.0
+    performance_car_g: 1.2
+    race_car_g: 1.5
+    default_g: 1.0
+    
+  # Braking efficiency factors
+  efficiency:
+    # Account for brake fade, imperfect technique
+    cold_brakes: 0.85
+    optimal_temperature: 1.0
+    overheated: 0.7
+    default: 0.9
+    
+  # Brake point calculation
+  brake_point:
+    # Additional safety distance added to calculated brake point
+    safety_distance_m: 10
+    # Human reaction time before braking begins
+    reaction_time_s: 0.3
+    # Account for surface variation
+    surface_variability_factor: 0.95
+
+# =============================================================================
+# CORNER SPEED MODEL PARAMETERS
+# =============================================================================
+
+corner_speed_model:
+  # Maximum lateral acceleration for controllability
+  # NOT maximum possible - maximum CONTROLLABLE
+  max_lateral_g:
+    conservative: 0.8
+    typical_car: 1.0
+    performance_car: 1.3
+    race_car: 2.0
+    default: 1.0
+    
+  # Corner speed formula: v = sqrt(g * mu * r)
+  # With safety factor applied
+  
+  # Additional factors
+  factors:
+    # Road camber effect (positive = banked toward corner)
+    camber_sensitivity: 0.1  # per degree
+    # Surface quality degradation
+    surface_quality_typical: 0.95
+    # Driver skill margin (always applied)
+    skill_margin: 0.90
+
+# =============================================================================
+# STEERING MODEL PARAMETERS
+# =============================================================================
+
+steering_model:
+  # Steering rate limits for stability
+  max_steering_rate_deg_per_s:
+    low_speed: 180   # Below 50 km/h
+    medium_speed: 90 # 50-150 km/h
+    high_speed: 45   # Above 150 km/h
+    
+  # Steering intensity thresholds
+  intensity_thresholds:
+    normal: 0.5      # Fraction of max steering angle
+    aggressive: 0.75
+    limit: 0.9
+    
+  # Oversteer/understeer detection
+  yaw_rate_thresholds:
+    expected_deviation_percent: 10
+    warning_deviation_percent: 20
+    critical_deviation_percent: 30
+
+# =============================================================================
+# COMBINED GRIP (FRICTION CIRCLE)
+# =============================================================================
+
+friction_circle:
+  # The friction circle defines total available grip
+  # sqrt(ax^2 + ay^2) <= mu * g
+  
+  # Shape factor (1.0 = perfect circle, <1.0 = ellipse)
+  shape_factor:
+    acceleration: 0.9   # Less grip available for acceleration
+    braking: 1.0        # Full grip for braking
+    default: 0.95
+    
+  # Combined maneuver penalties
+  combined_penalties:
+    trail_braking: 0.90      # Braking while turning
+    power_on_exit: 0.85      # Acceleration while turning
+    
+  # Stability margin
+  stability_margin: 0.85     # Keep 15% grip in reserve
+
+# =============================================================================
+# VEHICLE DYNAMICS ASSUMPTIONS
+# =============================================================================
+
+vehicle_dynamics:
+  # Weight distribution (affects braking balance)
+  weight_distribution:
+    front_percent_default: 55
+    
+  # Center of gravity
+  cog_height_m_default: 0.5
+  
+  # Track width (affects lateral load transfer)
+  track_width_m_default: 1.6
+  
+  # Wheelbase (affects weight transfer)
+  wheelbase_m_default: 2.7
+  
+  # Aerodynamic assumptions (simplified)
+  aero:
+    # Downforce increases grip at speed
+    downforce_coefficient: 0.0  # Default: no significant aero
+    # Reference speed for aero effects
+    reference_speed_kmh: 200
+
+# =============================================================================
+# ENVELOPE COMPUTATION PARAMETERS
+# =============================================================================
+
+envelope_computation:
+  # How physics envelopes are calculated
+  
+  # Segment-based computation
+  segment:
+    length_m: 50           # Base segment length
+    overlap_m: 10          # Overlap for continuity
+    
+  # Smoothing
+  smoothing:
+    window_size: 5         # Segments for smoothing
+    method: "gaussian"     # gaussian, moving_average
+    
+  # Update frequency
+  update_hz: 10            # How often envelope is recomputed
+
+# =============================================================================
+# SAFETY FACTORS SUMMARY
+# =============================================================================
+
+safety_factors:
+  # Master safety factor applied to all calculations
+  master_safety_factor: 0.85
+  
+  # Specific safety factors
+  corner_speed: 0.90
+  braking_distance: 1.15   # Add 15% to calculated distance
+  steering_limit: 0.85
+  combined_maneuver: 0.80
+  
+  # Confidence-based adjustment
+  # Lower confidence = more conservative
+  confidence_adjustment:
+    high_confidence_threshold: 0.9
+    low_confidence_threshold: 0.7
+    low_confidence_penalty: 0.85  # Additional 15% safety at low confidence
