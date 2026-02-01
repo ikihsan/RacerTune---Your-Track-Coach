@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Minimal UI for Track Recorder V1
+    
+    Purpose: Start/Stop + Debug visibility
+    Philosophy: Functional, not pretty
+-->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="#1A1A1A">
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Track Recorder V1"
+        android:textSize="24sp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:layout_marginBottom="24dp"/>
+
+    <!-- State indicator -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="State: IDLE"
+        android:textSize="18sp"
+        android:textColor="#FFD700"
+        android:fontFamily="monospace"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- Sensor status section -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#2A2A2A"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/tvGpsStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="GPS: Inactive"
+            android:textSize="16sp"
+            android:textColor="#AAAAAA"
+            android:fontFamily="monospace"/>
+
+        <TextView
+            android:id="@+id/tvImuStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="IMU: Inactive"
+            android:textSize="16sp"
+            android:textColor="#AAAAAA"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp"/>
+
+    </LinearLayout>
+
+    <!-- Sample counts -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#2A2A2A"
+        android:padding="16dp"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/tvGpsCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="GPS Samples: 0"
+            android:textSize="16sp"
+            android:textColor="#00FF00"
+            android:fontFamily="monospace"/>
+
+        <TextView
+            android:id="@+id/tvImuCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="IMU Samples: 0"
+            android:textSize="16sp"
+            android:textColor="#00FF00"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp"/>
+
+        <TextView
+            android:id="@+id/tvDuration"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Duration: 0.0s"
+            android:textSize="16sp"
+            android:textColor="#00FF00"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp"/>
+
+    </LinearLayout>
+
+    <!-- Main button -->
+    <Button
+        android:id="@+id/btnStartStop"
+        android:layout_width="match_parent"
+        android:layout_height="80dp"
+        android:text="START RECORDING"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:backgroundTint="#FF4444"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="16dp"/>
+
+    <!-- Last file indicator -->
+    <TextView
+        android:id="@+id/tvLastFile"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Last file: (none)"
+        android:textSize="14sp"
+        android:textColor="#888888"
+        android:fontFamily="monospace"/>
+
+    <!-- Instructions -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Files saved to:\nAndroid/data/com.f1.trackrecorder/files/"
+        android:textSize="12sp"
+        android:textColor="#666666"
+        android:fontFamily="monospace"
+        android:layout_marginTop="16dp"/>
+
+</LinearLayout>
