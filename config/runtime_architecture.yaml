@@ -1,0 +1,933 @@
+# =============================================================================
+# REAL-TIME SAFE RUNTIME ARCHITECTURE
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: Computation is king. UI is informational.
+# Voice is fire-and-forget. Nothing blocks the main loop.
+#
+# DESIGN GOALS:
+#   1. Sensor processing at 50Hz, never missed
+#   2. Detection and arbitration within 20ms cycle
+#   3. UI updates are best-effort, non-blocking
+#   4. Voice output is async, never blocks
+#   5. Logging is buffered, never blocks
+#
+# PLATFORMS:
+#   - Smartphone MVP (Android/iOS)
+#   - Embedded System (future, more constrained)
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "RUNTIME_SYSTEM"
+
+# =============================================================================
+# SECTION 1: THREAD MODEL
+# =============================================================================
+
+thread_model:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 THREAD INVENTORY
+  # ---------------------------------------------------------------------------
+  threads:
+    
+    MAIN:
+      name: "Main Processing Thread"
+      priority: "HIGHEST"
+      affinity: "Dedicated core if available"
+      purpose: |
+        Core computation: sensor fusion, localization, deviation detection,
+        envelope calculation, voice arbitration (decision only).
+      timing:
+        cycle_ms: 20
+        budget_ms: 18
+        slack_ms: 2
+      blocking_allowed: false
+      
+    SENSOR:
+      name: "Sensor Acquisition Thread"
+      priority: "HIGH"
+      purpose: |
+        Read GPS and IMU data from hardware/OS.
+        Buffer data for MAIN thread consumption.
+      timing:
+        rate_hz: 50-100
+        jitter_tolerance_ms: 5
+      blocking_allowed: true  # Hardware I/O
+      isolation: "Communicates via lock-free queue"
+      
+    VOICE:
+      name: "Voice Output Thread"
+      priority: "MEDIUM"
+      purpose: |
+        Generate TTS audio (if not pre-cached).
+        Manage audio playback queue.
+        Play audio through speakers.
+      timing:
+        latency_target_ms: 50
+        latency_max_ms: 100
+      blocking_allowed: true  # Audio I/O
+      isolation: "Fire-and-forget from MAIN"
+      
+    UI:
+      name: "UI Rendering Thread"
+      priority: "LOW"
+      purpose: |
+        Update visual displays.
+        Handle touch/input events.
+        Render non-critical information.
+      timing:
+        target_fps: 30
+        acceptable_fps: 15
+        skip_allowed: true
+      blocking_allowed: true  # GPU operations
+      isolation: "Read-only snapshot from MAIN"
+      
+    LOGGING:
+      name: "Logging Thread"
+      priority: "LOWEST"
+      purpose: |
+        Write buffered logs to storage.
+        Compress and manage log files.
+      timing:
+        batch_interval_ms: 1000
+        flush_on_idle: true
+      blocking_allowed: true  # File I/O
+      isolation: "Async write from ring buffer"
+      
+  # ---------------------------------------------------------------------------
+  # 1.2 THREAD RELATIONSHIPS
+  # ---------------------------------------------------------------------------
+  relationships:
+    
+    data_flow:
+      SENSOR → MAIN: "Lock-free SPSC queue"
+      MAIN → VOICE: "Lock-free MPSC queue"
+      MAIN → UI: "Atomic snapshot copy"
+      MAIN → LOGGING: "Ring buffer (overwrite on full)"
+      
+    synchronization:
+      - "No mutexes in MAIN thread critical path"
+      - "Lock-free queues for cross-thread communication"
+      - "Atomic operations for shared state"
+      - "Copy-on-read for UI to avoid holding references"
+      
+  # ---------------------------------------------------------------------------
+  # 1.3 PRIORITY INVERSION PREVENTION
+  # ---------------------------------------------------------------------------
+  priority_inversion:
+    
+    risk: |
+      Lower-priority thread holds resource needed by higher-priority thread.
+      MAIN thread would be blocked, missing timing deadline.
+      
+    prevention:
+      - "No shared locks between MAIN and other threads"
+      - "Lock-free data structures only"
+      - "MAIN never waits for other threads"
+      - "Other threads may be starved, but MAIN never blocked"
+
+# =============================================================================
+# SECTION 2: SCHEDULING PRIORITIES
+# =============================================================================
+
+scheduling:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 PRIORITY ASSIGNMENTS
+  # ---------------------------------------------------------------------------
+  priorities:
+    
+    platform_mapping:
+      
+      android:
+        MAIN: "THREAD_PRIORITY_URGENT_AUDIO"  # Highest
+        SENSOR: "THREAD_PRIORITY_MORE_URGENT"
+        VOICE: "THREAD_PRIORITY_DEFAULT"
+        UI: "THREAD_PRIORITY_DISPLAY"
+        LOGGING: "THREAD_PRIORITY_BACKGROUND"
+        
+      ios:
+        MAIN: "QOS_CLASS_USER_INTERACTIVE"
+        SENSOR: "QOS_CLASS_USER_INTERACTIVE"
+        VOICE: "QOS_CLASS_USER_INITIATED"
+        UI: "QOS_CLASS_USER_INITIATED"
+        LOGGING: "QOS_CLASS_UTILITY"
+        
+      embedded:
+        MAIN: "Priority 1 (highest)"
+        SENSOR: "Priority 2"
+        VOICE: "Priority 5"
+        UI: "Priority 10"
+        LOGGING: "Priority 15 (lowest)"
+        
+  # ---------------------------------------------------------------------------
+  # 2.2 CPU AFFINITY
+  # ---------------------------------------------------------------------------
+  affinity:
+    
+    smartphone:
+      strategy: "OS-managed with hints"
+      MAIN: "Request big core if available"
+      SENSOR: "Request big core"
+      VOICE: "Any core"
+      UI: "Any core"
+      LOGGING: "Little core preferred"
+      
+    embedded:
+      strategy: "Explicit core pinning"
+      MAIN: "Core 0 (dedicated)"
+      SENSOR: "Core 1"
+      VOICE: "Core 2"
+      UI: "Core 2 (shared)"
+      LOGGING: "Core 3"
+      
+  # ---------------------------------------------------------------------------
+  # 2.3 TIMING CONTRACTS
+  # ---------------------------------------------------------------------------
+  timing_contracts:
+    
+    MAIN:
+      period_ms: 20
+      deadline_ms: 18
+      wcet_target_ms: 10  # Worst-case execution time goal
+      miss_action: "Log, continue (best-effort)"
+      consecutive_miss_limit: 5
+      on_limit_exceeded: "Enter degraded mode"
+      
+    SENSOR:
+      period_ms: 10-20  # Hardware dependent
+      deadline_ms: "Before MAIN needs it"
+      miss_action: "Use last value, flag stale"
+      
+    VOICE:
+      period_ms: "Event-driven"
+      latency_ms: 50
+      miss_action: "Drop message"
+      
+    UI:
+      period_ms: 33  # 30 FPS
+      miss_action: "Skip frame"
+      
+    LOGGING:
+      period_ms: 1000
+      miss_action: "Defer to next cycle"
+
+# =============================================================================
+# SECTION 3: UI ISOLATION
+# =============================================================================
+
+ui_isolation:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 ISOLATION PRINCIPLE
+  # ---------------------------------------------------------------------------
+  principle:
+    
+    statement: |
+      UI is completely isolated from safety-critical computation.
+      UI cannot block, delay, or affect MAIN thread.
+      UI is informational only—no control inputs during driving.
+      
+    implementation:
+      - "UI thread is separate from MAIN"
+      - "UI reads snapshot, not live data"
+      - "UI can freeze without affecting computation"
+      - "UI crash does not crash system"
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 DATA TRANSFER
+  # ---------------------------------------------------------------------------
+  data_transfer:
+    
+    mechanism: "Atomic snapshot copy"
+    
+    snapshot_structure:
+      name: "UIState"
+      fields:
+        - timestamp_ms: "Integer"
+        - speed_kmh: "Float32"
+        - current_segment: "String"
+        - lap_number: "Integer"
+        - lap_time_ms: "Integer"
+        - deviation_flags: "FlagSummary"
+        - confidence: "Float32"
+        - system_state: "Enum"
+        - learning_tier: "Integer"
+        
+    update_rate:
+      target_hz: 10
+      acceptable_hz: 5
+      rationale: "UI doesn't need 50Hz updates"
+      
+    copy_mechanism:
+      method: "Double buffer with atomic swap"
+      lock_free: true
+      copy_time_us: "< 10"
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 UI BEHAVIOR
+  # ---------------------------------------------------------------------------
+  ui_behavior:
+    
+    read_only:
+      - "UI cannot modify system state"
+      - "UI cannot send commands to MAIN"
+      - "UI cannot trigger actions during driving"
+      
+    graceful_degradation:
+      on_stale_data: "Display last known values, show stale indicator"
+      on_no_data: "Display 'Connecting...' or equivalent"
+      on_crash: "Restart UI thread, computation continues"
+      
+    non_critical:
+      - "Missing UI update is acceptable"
+      - "Laggy UI is acceptable"
+      - "Wrong UI display is tolerable (informational only)"
+      
+  # ---------------------------------------------------------------------------
+  # 3.4 UI CONTENT
+  # ---------------------------------------------------------------------------
+  ui_content:
+    
+    allowed:
+      - "Current speed"
+      - "Lap timer"
+      - "Sector times"
+      - "System status (Ready/Learning/Standby)"
+      - "Confidence indicator"
+      - "Simple track map with position"
+      
+    forbidden_during_driving:
+      - "Settings menus"
+      - "Complex charts"
+      - "Text input"
+      - "Interactive elements"
+      
+    rationale: |
+      Driver should not be looking at phone while driving.
+      UI is for glance-checks or post-session review only.
+
+# =============================================================================
+# SECTION 4: VOICE ISOLATION
+# =============================================================================
+
+voice_isolation:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 FIRE-AND-FORGET MODEL
+  # ---------------------------------------------------------------------------
+  fire_and_forget:
+    
+    principle: |
+      MAIN thread hands message to VOICE thread and continues.
+      No waiting for acknowledgment.
+      No waiting for playback.
+      No callback on completion.
+      
+    implementation:
+      handoff: "Lock-free queue push"
+      duration_us: "< 50"
+      failure_mode: "If queue full, drop silently"
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 VOICE QUEUE
+  # ---------------------------------------------------------------------------
+  voice_queue:
+    
+    type: "Bounded MPSC (multi-producer, single-consumer)"
+    capacity: 8  # Maximum pending messages
+    overflow: "Drop oldest/lowest priority"
+    
+    message_format:
+      phrase_id: "Integer"
+      priority: "Integer"
+      timestamp_queued_ms: "Integer"
+      deadline_ms: "Integer"
+      
+    queue_management:
+      by_voice_thread: true
+      checks_priority: true
+      checks_expiry: true
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 AUDIO GENERATION
+  # ---------------------------------------------------------------------------
+  audio_generation:
+    
+    strategy: "Pre-generated audio files"
+    
+    pre_generation:
+      when: "Build time or first launch"
+      phrases: "All fixed phrases from dictionary"
+      format: "PCM 24kHz 16-bit or Opus compressed"
+      storage: "< 1MB total"
+      
+    runtime_generation:
+      when: "Only for dynamic content (lap times)"
+      method: "TTS engine (async)"
+      fallback: "Skip if generation too slow"
+      
+    latency:
+      pre_generated: "< 10ms (file read)"
+      runtime_tts: "50-200ms"
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 AUDIO PLAYBACK
+  # ---------------------------------------------------------------------------
+  audio_playback:
+    
+    isolation:
+      - "Playback on VOICE thread"
+      - "Uses OS audio APIs"
+      - "Errors logged but not propagated"
+      - "Playback failure does not affect MAIN"
+      
+    error_handling:
+      audio_device_busy: "Queue for retry"
+      audio_device_error: "Log, skip message"
+      system_audio_focus: "Respect OS audio focus"
+      
+    interruption:
+      can_interrupt_music: "Yes (with user permission)"
+      can_be_interrupted: "No (use audio focus)"
+
+# =============================================================================
+# SECTION 5: LOGGING BEHAVIOR
+# =============================================================================
+
+logging:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 LOGGING ARCHITECTURE
+  # ---------------------------------------------------------------------------
+  architecture:
+    
+    principle: |
+      Logging must never block computation.
+      Logs are written asynchronously.
+      Log loss is acceptable; blocking is not.
+      
+    mechanism: "Ring buffer with async drain"
+    
+    ring_buffer:
+      size_bytes: 1_048_576  # 1MB
+      entry_size_max_bytes: 1024
+      overflow: "Overwrite oldest entries"
+      
+    drain:
+      thread: "LOGGING"
+      frequency_ms: 1000
+      batch_size: "All available"
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 LOG LEVELS
+  # ---------------------------------------------------------------------------
+  log_levels:
+    
+    CRITICAL:
+      description: "System failure, safety event"
+      action: "Always log, attempt immediate flush"
+      
+    ERROR:
+      description: "Recoverable error"
+      action: "Always log"
+      
+    WARN:
+      description: "Unexpected but handled"
+      action: "Log in normal mode"
+      
+    INFO:
+      description: "Normal operation events"
+      action: "Log if space available"
+      
+    DEBUG:
+      description: "Detailed diagnostics"
+      action: "Log only in debug builds"
+      
+    TRACE:
+      description: "Per-sample data"
+      action: "Log only when explicitly enabled"
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 STRUCTURED LOGGING
+  # ---------------------------------------------------------------------------
+  structured:
+    
+    format: "Binary with schema"
+    
+    schema:
+      header:
+        - magic: "4 bytes"
+        - version: "2 bytes"
+        - session_id: "4 bytes"
+        
+      per_entry:
+        - timestamp_us: "8 bytes"
+        - level: "1 byte"
+        - category: "1 byte"
+        - length: "2 bytes"
+        - payload: "Variable"
+        
+    categories:
+      - SENSOR
+      - DETECTION
+      - ARBITRATION
+      - VOICE
+      - LEARNING
+      - SYSTEM
+      - ERROR
+      
+  # ---------------------------------------------------------------------------
+  # 5.4 LOG STORAGE
+  # ---------------------------------------------------------------------------
+  storage:
+    
+    location: "App-private storage"
+    
+    rotation:
+      max_file_size_mb: 10
+      max_files: 10
+      total_max_mb: 100
+      
+    compression:
+      enabled: true
+      algorithm: "LZ4 (fast)"
+      when: "On file close"
+      
+    retention:
+      default_days: 30
+      after_incident: 90
+
+# =============================================================================
+# SECTION 6: SMARTPHONE MVP ARCHITECTURE
+# =============================================================================
+
+smartphone_mvp:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 PLATFORM CONSTRAINTS
+  # ---------------------------------------------------------------------------
+  platform_constraints:
+    
+    android:
+      min_sdk: 26  # Android 8.0
+      target_sdk: 34
+      
+      sensor_access:
+        gps: "LocationManager or FusedLocationProvider"
+        imu: "SensorManager (TYPE_ACCELEROMETER, TYPE_GYROSCOPE)"
+        rates:
+          gps_hz: "1-10 (device dependent)"
+          imu_hz: "50-200"
+          
+      threading:
+        model: "Java threads or Kotlin coroutines"
+        native: "NDK for performance-critical code"
+        
+      audio:
+        api: "AudioTrack or Oboe"
+        latency: "Varies by device"
+        
+    ios:
+      min_version: "15.0"
+      
+      sensor_access:
+        gps: "CoreLocation"
+        imu: "CoreMotion"
+        rates:
+          gps_hz: "1-10"
+          imu_hz: "Up to 100"
+          
+      threading:
+        model: "Grand Central Dispatch or threads"
+        
+      audio:
+        api: "AVAudioEngine"
+        latency: "Generally good"
+        
+  # ---------------------------------------------------------------------------
+  # 6.2 MVP ARCHITECTURE DIAGRAM
+  # ---------------------------------------------------------------------------
+  architecture_diagram:
+    
+    description: |
+      
+      ┌─────────────────────────────────────────────────────────────────────┐
+      │                         SMARTPHONE MVP                              │
+      ├─────────────────────────────────────────────────────────────────────┤
+      │                                                                     │
+      │  ┌─────────────┐    Lock-free     ┌─────────────────────────────┐  │
+      │  │   SENSOR    │ ──── Queue ────→ │         MAIN THREAD         │  │
+      │  │   THREAD    │                  │  ┌─────────────────────────┐│  │
+      │  │             │                  │  │ Sensor Fusion           ││  │
+      │  │ GPS + IMU   │                  │  │ Localization            ││  │
+      │  │ 50-100 Hz   │                  │  │ Deviation Detection     ││  │
+      │  └─────────────┘                  │  │ Envelope Calculation    ││  │
+      │                                   │  │ Voice Arbitration       ││  │
+      │                                   │  └─────────────────────────┘│  │
+      │                                   │         20ms cycle          │  │
+      │                                   └──────────────┬──────────────┘  │
+      │                                                  │                 │
+      │                        ┌─────────────────────────┼─────────────┐   │
+      │                        │                         │             │   │
+      │                        ▼                         ▼             ▼   │
+      │               ┌─────────────┐          ┌──────────────┐  ┌──────┐ │
+      │               │   VOICE     │          │     UI       │  │ LOG  │ │
+      │               │   THREAD    │          │   THREAD     │  │THREAD│ │
+      │               │             │          │              │  │      │ │
+      │               │ TTS + Audio │          │ Display      │  │Async │ │
+      │               │ Fire-forget │          │ Read-only    │  │Write │ │
+      │               └─────────────┘          └──────────────┘  └──────┘ │
+      │                                                                    │
+      └────────────────────────────────────────────────────────────────────┘
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 MVP LIMITATIONS
+  # ---------------------------------------------------------------------------
+  mvp_limitations:
+    
+    known_issues:
+      
+      - issue: "GPS latency variability"
+        impact: "Position may be 100-500ms old"
+        mitigation: "Kalman filter prediction"
+        
+      - issue: "Background restrictions"
+        impact: "OS may throttle when screen off"
+        mitigation: "Foreground service (Android), location background mode (iOS)"
+        
+      - issue: "Thermal throttling"
+        impact: "CPU may slow down when hot"
+        mitigation: "Monitor thermals, reduce non-essential work"
+        
+      - issue: "Audio latency"
+        impact: "Voice may be delayed 50-200ms"
+        mitigation: "Acceptable for coaching; tune callout timing"
+        
+    acceptable_degradation:
+      - "UI frame drops"
+      - "Occasional missed log entries"
+      - "Slightly delayed voice"
+      
+    unacceptable:
+      - "Missed sensor readings"
+      - "MAIN thread blocking"
+      - "Crash during session"
+
+# =============================================================================
+# SECTION 7: EMBEDDED SYSTEM ARCHITECTURE
+# =============================================================================
+
+embedded_system:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 TARGET PLATFORM
+  # ---------------------------------------------------------------------------
+  target_platform:
+    
+    examples:
+      - "Raspberry Pi 4 (4-core ARM)"
+      - "Jetson Nano"
+      - "Custom ARM SoC"
+      
+    constraints:
+      memory_mb: 512  # Minimum
+      cores: 4  # Recommended
+      storage_gb: 4  # Minimum for logging
+      
+    sensors:
+      gps: "USB or UART GPS receiver"
+      imu: "SPI/I2C IMU (e.g., MPU-9250)"
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 RTOS CONSIDERATIONS
+  # ---------------------------------------------------------------------------
+  rtos:
+    
+    options:
+      - "Linux with PREEMPT_RT"
+      - "FreeRTOS"
+      - "Zephyr"
+      
+    linux_preempt_rt:
+      scheduling: "SCHED_FIFO for MAIN and SENSOR"
+      priorities: "Explicit priority assignment"
+      memory: "mlockall() to prevent paging"
+      
+    bare_metal:
+      scheduling: "Priority-based preemptive"
+      timing: "Hardware timers for precise scheduling"
+      memory: "Static allocation only"
+      
+  # ---------------------------------------------------------------------------
+  # 7.3 EMBEDDED ARCHITECTURE DIAGRAM
+  # ---------------------------------------------------------------------------
+  architecture_diagram:
+    
+    description: |
+      
+      ┌───────────────────────────────────────────────────────────────────┐
+      │                       EMBEDDED SYSTEM                              │
+      ├───────────────────────────────────────────────────────────────────┤
+      │                                                                    │
+      │   Core 0 (Dedicated)          Core 1            Core 2    Core 3  │
+      │  ┌─────────────────┐    ┌─────────────┐   ┌──────────┐  ┌──────┐ │
+      │  │   MAIN TASK     │    │SENSOR TASK  │   │VOICE TASK│  │ LOG  │ │
+      │  │                 │    │             │   │          │  │ TASK │ │
+      │  │ SCHED_FIFO      │    │SCHED_FIFO   │   │SCHED_RR  │  │      │ │
+      │  │ Priority 99     │    │Priority 98  │   │          │  │      │ │
+      │  │                 │◄───│             │   │          │  │      │ │
+      │  │ 50Hz hard       │    │100Hz        │   │On-demand │  │Batch │ │
+      │  │ deadline        │    │             │   │          │  │      │ │
+      │  └─────────────────┘    └─────────────┘   └──────────┘  └──────┘ │
+      │           │                                     ▲                 │
+      │           │              Lock-free              │                 │
+      │           └─────────────────────────────────────┘                 │
+      │                                                                    │
+      │  Hardware:                                                         │
+      │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────────┐  │
+      │  │GPS UART │  │IMU SPI  │  │Audio I2S│  │Storage (SD/eMMC)   │  │
+      │  └─────────┘  └─────────┘  └─────────┘  └─────────────────────┘  │
+      │                                                                    │
+      └────────────────────────────────────────────────────────────────────┘
+      
+  # ---------------------------------------------------------------------------
+  # 7.4 EMBEDDED OPTIMIZATIONS
+  # ---------------------------------------------------------------------------
+  optimizations:
+    
+    memory:
+      - "Static allocation (no malloc in runtime)"
+      - "Pre-allocated buffers for all data structures"
+      - "Memory pools for variable-size data"
+      
+    timing:
+      - "Hardware timer for MAIN loop scheduling"
+      - "DMA for sensor data acquisition"
+      - "CPU pinning for deterministic scheduling"
+      
+    reliability:
+      - "Watchdog timer to detect MAIN stall"
+      - "Memory error detection (ECC if available)"
+      - "Graceful degradation on component failure"
+      
+  # ---------------------------------------------------------------------------
+  # 7.5 EMBEDDED UI
+  # ---------------------------------------------------------------------------
+  embedded_ui:
+    
+    options:
+      - "No UI (voice only)"
+      - "Simple LED indicators"
+      - "Small LCD display (e.g., 320x240)"
+      - "External display via HDMI"
+      
+    preferred: "Voice only + status LEDs"
+    rationale: |
+      Driver should not look at display.
+      LEDs can indicate system status at a glance.
+      Full UI adds complexity without value.
+
+# =============================================================================
+# SECTION 8: MEMORY MODEL
+# =============================================================================
+
+memory_model:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 ALLOCATION STRATEGY
+  # ---------------------------------------------------------------------------
+  allocation:
+    
+    smartphone:
+      strategy: "Mostly pre-allocated, limited runtime allocation"
+      heap_budget_mb: 50
+      pre_allocation: "At startup for known structures"
+      runtime_allocation: "Minimized, pooled where needed"
+      
+    embedded:
+      strategy: "Static allocation only"
+      heap: "Disabled or severely restricted"
+      all_buffers: "Pre-sized at compile time"
+      
+  # ---------------------------------------------------------------------------
+  # 8.2 DATA STRUCTURES
+  # ---------------------------------------------------------------------------
+  data_structures:
+    
+    sensor_buffer:
+      type: "Ring buffer"
+      size: "200 samples (4 seconds at 50Hz)"
+      allocation: "Pre-allocated"
+      
+    message_queue:
+      type: "Lock-free bounded queue"
+      capacity: "8 messages"
+      allocation: "Pre-allocated"
+      
+    ui_snapshot:
+      type: "Double buffer"
+      size: "< 1KB"
+      allocation: "Pre-allocated"
+      
+    log_buffer:
+      type: "Ring buffer"
+      size: "1MB"
+      allocation: "Pre-allocated"
+      
+  # ---------------------------------------------------------------------------
+  # 8.3 CACHE CONSIDERATIONS
+  # ---------------------------------------------------------------------------
+  cache:
+    
+    hot_data:
+      - "Current sensor values"
+      - "Current segment geometry"
+      - "Active envelope limits"
+      
+    locality:
+      - "Sensor buffer sized to fit in L2 cache"
+      - "Processing loop accesses contiguous memory"
+      - "Avoid pointer chasing in hot path"
+
+# =============================================================================
+# SECTION 9: ERROR HANDLING
+# =============================================================================
+
+error_handling:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 ERROR PHILOSOPHY
+  # ---------------------------------------------------------------------------
+  philosophy:
+    
+    principle: |
+      Errors are expected. Handle them gracefully.
+      Never crash. Never block. Degrade functionality if needed.
+      
+    hierarchy:
+      1: "Continue normally if possible"
+      2: "Degrade specific feature"
+      3: "Degrade to minimal mode"
+      4: "Safe shutdown (preserve logs)"
+      
+  # ---------------------------------------------------------------------------
+  # 9.2 ERROR CATEGORIES
+  # ---------------------------------------------------------------------------
+  categories:
+    
+    transient:
+      description: "Temporary error, likely to recover"
+      examples:
+        - "Sensor reading timeout"
+        - "Audio buffer underrun"
+        - "Queue full"
+      action: "Retry or skip, continue"
+      
+    persistent:
+      description: "Error that won't self-resolve"
+      examples:
+        - "Sensor disconnected"
+        - "Audio device failed"
+        - "Storage full"
+      action: "Disable affected feature, continue"
+      
+    fatal:
+      description: "Cannot continue operation"
+      examples:
+        - "MAIN thread crash"
+        - "Out of memory"
+        - "Critical data corruption"
+      action: "Safe shutdown, preserve logs"
+      
+  # ---------------------------------------------------------------------------
+  # 9.3 ISOLATION BOUNDARIES
+  # ---------------------------------------------------------------------------
+  isolation:
+    
+    per_thread:
+      - "UI crash does not affect MAIN"
+      - "VOICE crash does not affect MAIN"
+      - "LOGGING crash does not affect MAIN"
+      - "SENSOR crash triggers degraded mode in MAIN"
+      
+    recovery:
+      UI: "Restart thread"
+      VOICE: "Restart thread, clear queue"
+      LOGGING: "Restart thread, accept data loss"
+      SENSOR: "Attempt reconnect, or GPS-only mode"
+
+# =============================================================================
+# SECTION 10: MONITORING AND HEALTH
+# =============================================================================
+
+monitoring:
+
+  # ---------------------------------------------------------------------------
+  # 10.1 HEALTH METRICS
+  # ---------------------------------------------------------------------------
+  health_metrics:
+    
+    main_thread:
+      - cycle_time_ms (target: < 18)
+      - cycle_time_max_ms
+      - deadline_misses_count
+      
+    sensor_thread:
+      - samples_per_second
+      - stale_data_count
+      - dropout_count
+      
+    voice_thread:
+      - queue_depth
+      - messages_dropped
+      - playback_latency_ms
+      
+    ui_thread:
+      - frame_rate
+      - frames_skipped
+      
+    logging_thread:
+      - buffer_usage_percent
+      - entries_dropped
+      - write_latency_ms
+      
+  # ---------------------------------------------------------------------------
+  # 10.2 WATCHDOG
+  # ---------------------------------------------------------------------------
+  watchdog:
+    
+    purpose: "Detect MAIN thread hang"
+    
+    mechanism:
+      - "MAIN thread kicks watchdog each cycle"
+      - "Watchdog timer resets on kick"
+      - "If timer expires (no kick), trigger recovery"
+      
+    timeout_ms: 100  # 5 missed cycles
+    
+    recovery_action:
+      smartphone: "Log error, attempt thread restart"
+      embedded: "Log error, system reset"
+      
+  # ---------------------------------------------------------------------------
+  # 10.3 TELEMETRY
+  # ---------------------------------------------------------------------------
+  telemetry:
+    
+    local:
+      - "All health metrics logged"
+      - "Available for post-session analysis"
+      
+    remote:
+      - "Optional crash reporting"
+      - "Anonymous usage statistics (if opted in)"
+      - "No personal or location data"
+
+# =============================================================================
+# END OF RUNTIME ARCHITECTURE SPECIFICATION
+# =============================================================================

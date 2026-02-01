@@ -1,0 +1,699 @@
+# =============================================================================
+# VOICE PHRASE DICTIONARY
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: Fixed, minimal, deterministic.
+# Every allowed phrase is listed. Anything not listed is FORBIDDEN.
+#
+# DESIGN RULES:
+#   1. One sentence maximum (most are single words)
+#   2. Deterministic mapping: input → exactly one phrase
+#   3. No dynamic wording (no "you" / "your" / names)
+#   4. No emotional manipulation (no "great!" / "come on!")
+#   5. Calm, professional race-engineer tone
+#   6. Terse: fewer syllables = faster processing
+#
+# PRONUNCIATION: All phrases designed for clarity at speed.
+# TIMING: Phrases timed to not exceed available attention windows.
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "VOICE_OUTPUT"
+
+# =============================================================================
+# SECTION 1: PHRASE INVENTORY
+# =============================================================================
+
+phrase_inventory:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 BRAKING REFERENCE PHRASES
+  # ---------------------------------------------------------------------------
+  braking:
+    
+    BRAKE:
+      phrase: "Brake"
+      duration_ms: 350
+      priority: HIGH
+      context: "At or just before calculated braking point"
+      mapping: "brake_point_reached"
+      
+    BRAKE_HARD:
+      phrase: "Brake hard"
+      duration_ms: 500
+      priority: HIGH
+      context: "Late braking situation, need maximum deceleration"
+      mapping: "late_braking_detected AND recoverable"
+      
+    BRAKE_EARLY:
+      phrase: "Brake early"
+      duration_ms: 550
+      priority: MEDIUM
+      context: "Approach speed higher than envelope suggests"
+      mapping: "entry_too_fast AND distance > 80m"
+      
+  # ---------------------------------------------------------------------------
+  # 1.2 SPEED REFERENCE PHRASES
+  # ---------------------------------------------------------------------------
+  speed:
+    
+    # Numeric speed callouts (km/h, rounded to nearest 10)
+    SPEED_40:
+      phrase: "Forty"
+      duration_ms: 400
+      
+    SPEED_50:
+      phrase: "Fifty"
+      duration_ms: 400
+      
+    SPEED_60:
+      phrase: "Sixty"
+      duration_ms: 400
+      
+    SPEED_70:
+      phrase: "Seventy"
+      duration_ms: 450
+      
+    SPEED_80:
+      phrase: "Eighty"
+      duration_ms: 400
+      
+    SPEED_90:
+      phrase: "Ninety"
+      duration_ms: 450
+      
+    SPEED_100:
+      phrase: "One hundred"
+      duration_ms: 550
+      
+    SPEED_110:
+      phrase: "One ten"
+      duration_ms: 450
+      
+    SPEED_120:
+      phrase: "One twenty"
+      duration_ms: 500
+      
+    SPEED_130:
+      phrase: "One thirty"
+      duration_ms: 500
+      
+    SPEED_140:
+      phrase: "One forty"
+      duration_ms: 500
+      
+    SPEED_150:
+      phrase: "One fifty"
+      duration_ms: 500
+      
+    SPEED_160:
+      phrase: "One sixty"
+      duration_ms: 500
+      
+    SPEED_170:
+      phrase: "One seventy"
+      duration_ms: 550
+      
+    SPEED_180:
+      phrase: "One eighty"
+      duration_ms: 500
+      
+    SPEED_190:
+      phrase: "One ninety"
+      duration_ms: 500
+      
+    SPEED_200:
+      phrase: "Two hundred"
+      duration_ms: 550
+      
+    context: "Corner entry speed reference"
+    priority: MEDIUM
+    mapping: "corner_approach AND confidence >= 0.70"
+    
+  # ---------------------------------------------------------------------------
+  # 1.3 DEVIATION WARNING PHRASES
+  # ---------------------------------------------------------------------------
+  deviation:
+    
+    TOO_FAST:
+      phrase: "Too fast"
+      duration_ms: 500
+      priority: HIGH
+      context: "Entry speed significantly exceeds envelope"
+      mapping: "ENTRY_TOO_FAST.active AND severity >= MEDIUM"
+      
+    EASY:
+      phrase: "Easy"
+      duration_ms: 350
+      priority: MEDIUM
+      context: "Moderate over-aggression, reduce intensity"
+      mapping: "STEERING_TOO_AGGRESSIVE.active OR ABRUPT_THROTTLE.active"
+      note: "Single word, non-judgmental"
+      
+    SLOW:
+      phrase: "Slow"
+      duration_ms: 350
+      priority: HIGH
+      context: "Need immediate speed reduction"
+      mapping: "ENTRY_TOO_FAST.severity == HIGH"
+      
+  # ---------------------------------------------------------------------------
+  # 1.4 CORNER PHASE PHRASES
+  # ---------------------------------------------------------------------------
+  corner_phase:
+    
+    TURN_IN:
+      phrase: "Turn in"
+      duration_ms: 450
+      priority: MEDIUM
+      context: "At corner entry point"
+      mapping: "corner_entry_point_reached"
+      note: "Rarely used - driver knows when to turn"
+      
+    APEX:
+      phrase: "Apex"
+      duration_ms: 400
+      priority: LOW
+      context: "Approaching apex, reminder of clipping point"
+      mapping: "apex_approaching AND driver_learning"
+      
+    POWER:
+      phrase: "Power"
+      duration_ms: 400
+      priority: MEDIUM
+      context: "Safe to apply throttle on exit"
+      mapping: "corner_exit AND grip_available"
+      
+    FULL:
+      phrase: "Full"
+      duration_ms: 300
+      priority: LOW
+      context: "Full throttle safe"
+      mapping: "straight_entered AND no_constraints"
+      
+  # ---------------------------------------------------------------------------
+  # 1.5 ACKNOWLEDGMENT PHRASES
+  # ---------------------------------------------------------------------------
+  acknowledgment:
+    
+    GOOD:
+      phrase: "Good"
+      duration_ms: 350
+      priority: LOW
+      context: "Segment executed within envelope"
+      mapping: "segment_complete AND no_deviations"
+      note: "Sparing use - silence often better"
+      
+    OKAY:
+      phrase: "Okay"
+      duration_ms: 350
+      priority: LOW
+      context: "Adequate execution, minor imperfections"
+      mapping: "segment_complete AND minor_deviation"
+      
+    COPY:
+      phrase: "Copy"
+      duration_ms: 400
+      priority: LOW
+      context: "Acknowledgment of driver action"
+      mapping: "driver_corrected_after_warning"
+      note: "Confirms driver response was noted"
+      
+  # ---------------------------------------------------------------------------
+  # 1.6 INFORMATION PHRASES
+  # ---------------------------------------------------------------------------
+  information:
+    
+    LAP_TIME:
+      phrase: "[time]"  # e.g., "One forty-two point five"
+      duration_ms: 1200
+      priority: LOW
+      context: "Lap time at start/finish"
+      mapping: "lap_complete AND in_window"
+      format: "Minutes, seconds, tenths"
+      
+    PLUS:
+      phrase: "Plus [delta]"  # e.g., "Plus two"
+      duration_ms: 500
+      priority: LOW
+      context: "Slower than reference"
+      mapping: "sector_complete AND delta > 0.5s"
+      
+    MINUS:
+      phrase: "Minus [delta]"  # e.g., "Minus one"
+      duration_ms: 500
+      priority: LOW
+      context: "Faster than reference"
+      mapping: "sector_complete AND delta < -0.5s"
+      
+    EVEN:
+      phrase: "Even"
+      duration_ms: 350
+      priority: LOW
+      context: "Within 0.5s of reference"
+      mapping: "sector_complete AND abs(delta) <= 0.5s"
+      
+  # ---------------------------------------------------------------------------
+  # 1.7 SYSTEM STATUS PHRASES
+  # ---------------------------------------------------------------------------
+  system:
+    
+    RECORDING:
+      phrase: "Recording"
+      duration_ms: 550
+      priority: MEDIUM
+      context: "Session recording started"
+      mapping: "session_start"
+      
+    LEARNING:
+      phrase: "Learning"
+      duration_ms: 500
+      priority: LOW
+      context: "Track learning in progress"
+      mapping: "learning_active AND tier_change"
+      
+    READY:
+      phrase: "Ready"
+      duration_ms: 400
+      priority: MEDIUM
+      context: "System initialized, learning complete enough"
+      mapping: "learning_tier >= 2"
+      
+    STANDBY:
+      phrase: "Standby"
+      duration_ms: 500
+      priority: LOW
+      context: "System in degraded mode"
+      mapping: "confidence < 0.60"
+      
+    OFFLINE:
+      phrase: "Offline"
+      duration_ms: 500
+      priority: MEDIUM
+      context: "System cannot function"
+      mapping: "critical_failure"
+      
+  # ---------------------------------------------------------------------------
+  # 1.8 SAFETY PHRASES
+  # ---------------------------------------------------------------------------
+  safety:
+    
+    FLAG:
+      phrase: "Flag"
+      duration_ms: 300
+      priority: CRITICAL
+      context: "Yellow/red flag condition"
+      mapping: "safety_flag_detected"
+      note: "Repeat up to 3x for emphasis"
+      
+    CAUTION:
+      phrase: "Caution"
+      duration_ms: 500
+      priority: CRITICAL
+      context: "Hazard on track"
+      mapping: "hazard_detected"
+      
+    PIT:
+      phrase: "Pit"
+      duration_ms: 300
+      priority: HIGH
+      context: "Pit lane entry approaching"
+      mapping: "pit_entry_approaching AND pit_planned"
+      
+  # ---------------------------------------------------------------------------
+  # 1.9 COMPOUND PHRASES (ALLOWED COMBINATIONS)
+  # ---------------------------------------------------------------------------
+  compounds:
+    
+    description: |
+      Limited compound phrases for efficiency. These are the ONLY
+      allowed combinations. Any other combination is FORBIDDEN.
+      
+    allowed:
+      
+      BRAKE_SPEED:
+        pattern: "[BRAKE] ... [SPEED]"
+        example: "Brake ... Ninety"
+        duration_ms: 900
+        pause_between_ms: 100
+        mapping: "brake_point AND speed_reference"
+        
+      SPEED_TURN:
+        pattern: "[SPEED] ... turn"
+        example: "Eighty ... turn"
+        duration_ms: 800
+        mapping: "speed_with_turn_in"
+        
+      TOO_FAST_SLOW:
+        pattern: "Too fast ... [SLOW|EASY]"
+        example: "Too fast ... slow"
+        duration_ms: 900
+        mapping: "severe_entry_warning"
+        
+    forbidden: |
+      All other combinations are forbidden.
+      NO: "Brake hard at ninety" (too long)
+      NO: "Good corner, nice apex" (conversational)
+      NO: "You're going too fast" (uses "you")
+
+# =============================================================================
+# SECTION 2: MAPPING RULES
+# =============================================================================
+
+mapping_rules:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 DETERMINISTIC MAPPING
+  # ---------------------------------------------------------------------------
+  determinism:
+    
+    principle: |
+      Each input state maps to exactly one phrase (or silence).
+      No randomization, no variation, no synonyms.
+      
+    lookup_table:
+      description: |
+        Input: (flag_state, segment_context, confidence, timing)
+        Output: phrase_id OR SILENCE
+        
+    no_variation:
+      - "Never say 'brake' sometimes and 'braking' other times"
+      - "Never add filler words"
+      - "Never vary intonation for emphasis (TTS handles this)"
+      
+  # ---------------------------------------------------------------------------
+  # 2.2 FLAG TO PHRASE MAPPING
+  # ---------------------------------------------------------------------------
+  flag_mapping:
+    
+    ENTRY_TOO_FAST:
+      LOW: "SILENCE"  # Minor, driver will notice
+      MEDIUM: "TOO_FAST"
+      HIGH: "SLOW"
+      
+    STEERING_TOO_AGGRESSIVE:
+      LOW: "SILENCE"
+      MEDIUM: "EASY"
+      HIGH: "EASY"
+      
+    LATE_BRAKING:
+      LOW: "SILENCE"
+      MEDIUM: "BRAKE_HARD"
+      HIGH: "BRAKE_HARD"
+      
+    ABRUPT_THROTTLE:
+      LOW: "SILENCE"
+      MEDIUM: "EASY"
+      HIGH: "EASY"
+      
+  # ---------------------------------------------------------------------------
+  # 2.3 CONTEXT MODIFIERS
+  # ---------------------------------------------------------------------------
+  context_modifiers:
+    
+    confidence_gate:
+      below_0.60: "SILENCE regardless of flag"
+      below_0.70: "Only HIGH/CRITICAL phrases"
+      above_0.70: "Normal mapping"
+      
+    timing_gate:
+      in_prohibited_zone: "SILENCE regardless of flag"
+      in_allowed_window: "Normal mapping"
+      
+    repetition_gate:
+      same_phrase_cooldown: "SILENCE if phrase used in last 10s"
+      same_corner_limit: "Maximum 2 phrases per corner"
+
+# =============================================================================
+# SECTION 3: FORBIDDEN CONTENT
+# =============================================================================
+
+forbidden_content:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 FORBIDDEN WORDS
+  # ---------------------------------------------------------------------------
+  forbidden_words:
+    
+    personal_pronouns:
+      - "you"
+      - "your"
+      - "you're"
+      reason: "Impersonal, professional tone"
+      
+    emotional_words:
+      - "great"
+      - "excellent"
+      - "perfect"
+      - "awesome"
+      - "nice"
+      - "beautiful"
+      - "terrible"
+      - "bad"
+      - "wrong"
+      reason: "No emotional manipulation"
+      
+    filler_words:
+      - "okay so"
+      - "alright"
+      - "um"
+      - "well"
+      - "just"
+      - "maybe"
+      reason: "Wastes attention bandwidth"
+      
+    judgmental_words:
+      - "should"
+      - "shouldn't"
+      - "must"
+      - "need to"
+      - "have to"
+      reason: "Advisory, not commanding"
+      
+    speculative_words:
+      - "might"
+      - "could"
+      - "probably"
+      - "perhaps"
+      reason: "Must be definitive or silent"
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 FORBIDDEN STRUCTURES
+  # ---------------------------------------------------------------------------
+  forbidden_structures:
+    
+    - structure: "Questions"
+      example: "Are you ready?"
+      reason: "Cannot process response while driving"
+      
+    - structure: "Multi-sentence"
+      example: "That was good. Now focus on the next corner."
+      reason: "Too long, splits attention"
+      
+    - structure: "Explanations"
+      example: "Brake earlier because the corner is tighter than it looks"
+      reason: "Analysis is for post-session"
+      
+    - structure: "Comparisons"
+      example: "That was better than last lap"
+      reason: "Irrelevant to current moment"
+      
+    - structure: "Future predictions"
+      example: "The next corner will be tricky"
+      reason: "Vague, not actionable"
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 FORBIDDEN BEHAVIORS
+  # ---------------------------------------------------------------------------
+  forbidden_behaviors:
+    
+    - behavior: "Dynamic phrase generation"
+      definition: "Constructing phrases at runtime"
+      reason: "Non-deterministic, untested outputs"
+      
+    - behavior: "Synonym variation"
+      definition: "Alternating between equivalent phrases"
+      reason: "Inconsistency confuses driver"
+      
+    - behavior: "Emphasis variation"
+      definition: "Saying 'BRAKE!' vs 'brake'"
+      reason: "Tone handled by TTS, not content"
+      
+    - behavior: "Chatty feedback"
+      definition: "Commenting on every corner"
+      reason: "Noise destroys trust"
+
+# =============================================================================
+# SECTION 4: PHRASE TIMING
+# =============================================================================
+
+phrase_timing:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 DURATION LIMITS
+  # ---------------------------------------------------------------------------
+  duration_limits:
+    
+    maximum_single_phrase_ms: 600
+    maximum_compound_phrase_ms: 1200
+    maximum_with_pause_ms: 1500
+    
+    rationale: |
+      At 200 km/h, driver travels 55m per second.
+      A 1-second phrase spans 55m of track.
+      Longer phrases risk spanning context changes.
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 PAUSE RULES
+  # ---------------------------------------------------------------------------
+  pause_rules:
+    
+    between_compound_parts_ms: 100
+    minimum_between_utterances_ms: 3000
+    
+    pause_rationale: |
+      Brief pause between compound parts aids parsing.
+      Long pause between utterances allows processing.
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 DELIVERY TIMING
+  # ---------------------------------------------------------------------------
+  delivery_timing:
+    
+    anticipation:
+      description: "Speak slightly before action point"
+      lead_time_ms: 300
+      rationale: "Processing delay means action happens at right time"
+      
+    braking_callout:
+      timing: "300ms before calculated brake point"
+      rationale: "Driver hears 'brake' as they reach the point"
+      
+    speed_callout:
+      timing: "During approach straight, >100m from corner"
+      rationale: "Give time to register and adjust"
+
+# =============================================================================
+# SECTION 5: TTS REQUIREMENTS
+# =============================================================================
+
+tts_requirements:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 VOICE CHARACTERISTICS
+  # ---------------------------------------------------------------------------
+  voice:
+    
+    gender: "Neutral or configurable"
+    tone: "Calm, professional, clear"
+    pace: "Moderate-to-fast (not rushed, not languid)"
+    pitch: "Medium (clear in noisy environment)"
+    
+    style: |
+      Race engineer on radio. Brief, factual, unemotional.
+      Think: "Brake... fifty" not "Okay so you need to brake for this one."
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 AUDIO REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  audio:
+    
+    sample_rate_hz: 24000
+    bit_depth: 16
+    format: "PCM or compressed (Opus)"
+    
+    latency:
+      maximum_ms: 50
+      target_ms: 20
+      rationale: "Voice must feel instantaneous"
+      
+    pre_generation:
+      description: "All standard phrases pre-generated"
+      storage: "< 1MB for full dictionary"
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 CLARITY REQUIREMENTS
+  # ---------------------------------------------------------------------------
+  clarity:
+    
+    noise_consideration: |
+      Phrases must be distinguishable in:
+      - Engine noise (high-RPM drone)
+      - Wind noise (open cockpit)
+      - Tire noise
+      - Helmet environment
+      
+    phonetic_distinctiveness:
+      - "'Brake' distinct from 'Break'"
+      - "'Slow' distinct from 'Go'"
+      - "'Fifty' distinct from 'Sixty'"
+      - "Numbers clearly enunciated"
+
+# =============================================================================
+# SECTION 6: COMPLETE PHRASE LIST
+# =============================================================================
+
+complete_phrase_list:
+
+  description: |
+    This is the COMPLETE list of allowed phrases.
+    ANY phrase not on this list is FORBIDDEN.
+    
+  alphabetical:
+    - "Apex"
+    - "Brake"
+    - "Brake early"
+    - "Brake hard"
+    - "Caution"
+    - "Copy"
+    - "Easy"
+    - "Even"
+    - "Fifty"
+    - "Forty"
+    - "Flag"
+    - "Full"
+    - "Good"
+    - "Learning"
+    - "Minus [delta]"
+    - "Ninety"
+    - "Offline"
+    - "Okay"
+    - "One eighty"
+    - "One fifty"
+    - "One forty"
+    - "One hundred"
+    - "One ninety"
+    - "One seventy"
+    - "One sixty"
+    - "One ten"
+    - "One thirty"
+    - "One twenty"
+    - "Pit"
+    - "Plus [delta]"
+    - "Power"
+    - "Ready"
+    - "Recording"
+    - "Seventy"
+    - "Sixty"
+    - "Slow"
+    - "Standby"
+    - "Too fast"
+    - "Turn in"
+    - "Two hundred"
+    
+  total_count: 40
+  
+  dynamic_elements:
+    - "[delta]": "Numeric delta in seconds (e.g., 'one', 'two point five')"
+    - "[time]": "Lap time (e.g., 'one forty-two point five')"
+    
+  note: |
+    Numeric speed phrases (40-200) are templated but finite.
+    Delta and time phrases use limited numeric vocabulary.
+
+# =============================================================================
+# END OF VOICE PHRASE DICTIONARY
+# =============================================================================

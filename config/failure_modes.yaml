@@ -1,0 +1,1090 @@
+# =============================================================================
+# FAILURE MODES ENUMERATION
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING RULE: Fail silent, never wrong.
+#
+# PRINCIPLE:
+#   It is better to give NO advice than WRONG advice.
+#   Every failure mode degrades toward silence.
+#   The system never guesses or assumes.
+#
+# FAILURE HIERARCHY:
+#   1. Detect failure early
+#   2. Respond immediately (safe state)
+#   3. Degrade gracefully (reduce capability)
+#   4. Log for analysis
+#   5. Recover when possible
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "SAFETY_CRITICAL"
+
+# =============================================================================
+# SECTION 1: FAILURE MODE TAXONOMY
+# =============================================================================
+
+taxonomy:
+
+  categories:
+    
+    - category: "SENSOR"
+      description: "Failures in data acquisition"
+      failures:
+        - SENSOR_LOSS
+        - SENSOR_DISAGREEMENT
+        - SENSOR_DEGRADATION
+        - SENSOR_NOISE
+        
+    - category: "GEOMETRY"
+      description: "Failures in track model"
+      failures:
+        - LOW_CONFIDENCE_GEOMETRY
+        - GEOMETRY_CORRUPTION
+        - LOCALIZATION_FAILURE
+        
+    - category: "LEARNING"
+      description: "Failures in adaptive system"
+      failures:
+        - LEARNING_CORRUPTION
+        - LEARNING_STALE
+        - ENVELOPE_INVALID
+        
+    - category: "VOICE"
+      description: "Failures in output system"
+      failures:
+        - VOICE_SYSTEM_FAILURE
+        - AUDIO_DEVICE_FAILURE
+        - TTS_FAILURE
+        
+    - category: "RUNTIME"
+      description: "Failures in execution"
+      failures:
+        - RUNTIME_OVERLOAD
+        - MEMORY_EXHAUSTION
+        - THREAD_FAILURE
+        - WATCHDOG_TIMEOUT
+
+# =============================================================================
+# SECTION 2: SENSOR FAILURES
+# =============================================================================
+
+sensor_failures:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 SENSOR_LOSS
+  # ---------------------------------------------------------------------------
+  SENSOR_LOSS:
+    
+    description: |
+      Complete loss of sensor data. No readings available.
+      
+    variants:
+      
+      GPS_LOSS:
+        description: "No GPS fix available"
+        
+        detection:
+          primary: "No GPS update for >2 seconds"
+          secondary: "GPS fix quality = NO_FIX"
+          confidence: "HIGH (definitive)"
+          
+        response:
+          immediate:
+            - "Set position_confidence = 0"
+            - "Set sensor_health = DEGRADED"
+            - "Suppress all position-dependent voice"
+          voice:
+            if_prolonged: "'Standby' (once)"
+            
+        degradation:
+          level: "SEVERE"
+          capabilities_lost:
+            - "Position-based callouts"
+            - "Braking references"
+            - "Corner detection"
+            - "Lap timing"
+          capabilities_retained:
+            - "IMU-based deviation detection (limited)"
+            - "Speed from IMU integration (short term)"
+            
+        recovery:
+          trigger: "GPS fix restored"
+          validation: "3 consecutive valid fixes"
+          action: "Restore position confidence gradually"
+          announcement: "'Ready' (if was in Standby)"
+          
+      IMU_LOSS:
+        description: "No IMU data available"
+        
+        detection:
+          primary: "No IMU update for >100ms"
+          secondary: "IMU reports error status"
+          
+        response:
+          immediate:
+            - "Set imu_health = FAILED"
+            - "Use GPS-only mode"
+            - "Suppress acceleration-based flags"
+            
+        degradation:
+          level: "MODERATE"
+          capabilities_lost:
+            - "High-frequency acceleration detection"
+            - "Steering intensity detection"
+            - "Combined grip monitoring"
+          capabilities_retained:
+            - "Position tracking (GPS)"
+            - "Speed from GPS"
+            - "Braking references"
+            
+        recovery:
+          trigger: "IMU data restored"
+          validation: "10 consecutive valid samples"
+          action: "Re-enable IMU-based detection"
+          
+  # ---------------------------------------------------------------------------
+  # 2.2 SENSOR_DISAGREEMENT
+  # ---------------------------------------------------------------------------
+  SENSOR_DISAGREEMENT:
+    
+    description: |
+      Multiple sensors provide conflicting data.
+      Cannot determine which is correct.
+      
+    variants:
+      
+      SPEED_DISAGREEMENT:
+        description: "GPS speed and IMU-integrated speed diverge"
+        
+        detection:
+          condition: "|GPS_speed - IMU_speed| > 5 m/s"
+          duration: ">2 seconds"
+          
+        response:
+          immediate:
+            - "Flag speed_confidence = LOW"
+            - "Use GPS speed (more stable over time)"
+            - "Log disagreement for analysis"
+          voice:
+            action: "Suppress speed-dependent callouts"
+            
+        degradation:
+          level: "MODERATE"
+          action: "Trust GPS, distrust IMU integration"
+          
+        recovery:
+          trigger: "Agreement restored (<2 m/s difference)"
+          action: "Recalibrate IMU bias estimates"
+          
+      HEADING_DISAGREEMENT:
+        description: "GPS heading and IMU heading diverge"
+        
+        detection:
+          condition: "|GPS_heading - IMU_heading| > 20°"
+          duration: ">1 second"
+          
+        response:
+          immediate:
+            - "Flag heading_confidence = LOW"
+            - "Reduce segment localization confidence"
+          
+        degradation:
+          level: "MODERATE"
+          action: "Use GPS heading, recalibrate IMU"
+          
+      POSITION_SPEED_DISAGREEMENT:
+        description: "Position change implies different speed than reported"
+        
+        detection:
+          condition: |
+            implied_speed = |position_delta| / time_delta
+            |implied_speed - reported_speed| > 3 m/s
+            
+        response:
+          immediate:
+            - "Flag position_confidence = LOW"
+            - "Increase localization uncertainty"
+            
+  # ---------------------------------------------------------------------------
+  # 2.3 SENSOR_DEGRADATION
+  # ---------------------------------------------------------------------------
+  SENSOR_DEGRADATION:
+    
+    description: |
+      Sensor is working but quality is reduced.
+      
+    variants:
+      
+      GPS_DEGRADATION:
+        description: "GPS fix quality poor but not lost"
+        
+        detection:
+          levels:
+            MILD: "HDOP 2.0-2.5"
+            MODERATE: "HDOP 2.5-3.5"
+            SEVERE: "HDOP > 3.5"
+            
+        response:
+          MILD:
+            - "Reduce voice frequency"
+            - "Increase callout thresholds"
+          MODERATE:
+            - "Position-based callouts only HIGH priority"
+            - "Announce 'Standby' if previously 'Ready'"
+          SEVERE:
+            - "Suppress all position-based voice"
+            - "Equivalent to GPS_LOSS"
+            
+        degradation:
+          scales_with_severity: true
+          
+      IMU_DEGRADATION:
+        description: "IMU drift or noise increasing"
+        
+        detection:
+          drift: "Integrated position diverges from GPS"
+          noise: "High variance in stationary readings"
+          
+        response:
+          - "Increase fusion filter process noise"
+          - "Weight GPS more heavily"
+          - "Reduce IMU-based callout confidence"
+          
+  # ---------------------------------------------------------------------------
+  # 2.4 SENSOR_NOISE
+  # ---------------------------------------------------------------------------
+  SENSOR_NOISE:
+    
+    description: |
+      Excessive noise or spikes in sensor data.
+      
+    detection:
+      method: "Statistical outlier detection"
+      condition: "|sample - median| > 5 × MAD"
+      
+    response:
+      immediate:
+        - "Reject outlier sample"
+        - "Use previous valid sample"
+        - "Increment noise_event counter"
+      sustained:
+        - "If noise_events > 10 in 1 second"
+        - "Flag sensor_health = NOISY"
+        - "Increase filtering aggressiveness"
+        
+    degradation:
+      level: "MILD"
+      action: "Increase smoothing, accept latency"
+
+# =============================================================================
+# SECTION 3: GEOMETRY FAILURES
+# =============================================================================
+
+geometry_failures:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 LOW_CONFIDENCE_GEOMETRY
+  # ---------------------------------------------------------------------------
+  LOW_CONFIDENCE_GEOMETRY:
+    
+    description: |
+      Track geometry has low confidence. May be inaccurate.
+      
+    detection:
+      condition: "segment.geometry_confidence < 0.60"
+      scope: "Per-segment evaluation"
+      
+    response:
+      per_segment:
+        - "Increase envelope margins for this segment"
+        - "Suppress specific callouts for this segment"
+        - "Flag segment in UI"
+      global:
+        if_many_segments_affected: |
+          If >30% of track segments low confidence:
+          - Announce 'Learning' status
+          - Reduce overall coaching confidence
+          
+    degradation:
+      level: "MODERATE"
+      action: |
+        Use physics-only envelope (0.70 margin).
+        Suppress learned envelope application.
+        
+    recovery:
+      trigger: "More laps add confidence"
+      threshold: "geometry_confidence >= 0.70"
+      action: "Resume normal envelope blend"
+      
+  # ---------------------------------------------------------------------------
+  # 3.2 GEOMETRY_CORRUPTION
+  # ---------------------------------------------------------------------------
+  GEOMETRY_CORRUPTION:
+    
+    description: |
+      Stored geometry fails sanity checks. Data may be corrupt.
+      
+    detection:
+      checks:
+        - "Track length < 500m or > 50km (invalid)"
+        - "Curvature values physically impossible"
+        - "Segment boundaries non-monotonic"
+        - "Checksum mismatch"
+        
+    response:
+      immediate:
+        - "Set geometry_valid = FALSE"
+        - "Announce 'Learning' (restarting)"
+        - "Discard corrupted geometry"
+        - "Begin fresh track learning"
+        
+    degradation:
+      level: "SEVERE"
+      action: "No coaching until geometry rebuilt"
+      
+    recovery:
+      trigger: "New geometry passes all checks"
+      action: "Resume normal operation"
+      
+    prevention:
+      - "Checksums on stored geometry"
+      - "Sanity checks on load"
+      - "Sanity checks on update"
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 LOCALIZATION_FAILURE
+  # ---------------------------------------------------------------------------
+  LOCALIZATION_FAILURE:
+    
+    description: |
+      Cannot determine position on track. Lost on circuit.
+      
+    detection:
+      conditions:
+        - "Position outside track bounds by > 50m"
+        - "Segment match confidence < 0.30"
+        - "Position jumps > 100m between samples"
+        
+    response:
+      immediate:
+        - "Set localization_confidence = 0"
+        - "Suppress all position-based output"
+        - "Attempt re-localization"
+      recovery_attempt:
+        - "Use GPS history to find likely position"
+        - "Match to nearest track point"
+        - "Validate with heading/curvature"
+        
+    degradation:
+      level: "SEVERE"
+      action: "No position-based coaching"
+      
+    recovery:
+      trigger: "Re-localization succeeds"
+      validation: "5 consecutive matching segments"
+      action: "Restore position-based coaching"
+
+# =============================================================================
+# SECTION 4: LEARNING FAILURES
+# =============================================================================
+
+learning_failures:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 LEARNING_CORRUPTION
+  # ---------------------------------------------------------------------------
+  LEARNING_CORRUPTION:
+    
+    description: |
+      Learned data fails validation. Cannot be trusted.
+      
+    detection:
+      checks:
+        - "Learned envelope > physics envelope (impossible)"
+        - "Statistics have NaN or Inf values"
+        - "Observation count doesn't match data"
+        - "Checksum mismatch"
+        
+    response:
+      immediate:
+        - "Set learning_valid = FALSE for affected segment"
+        - "Revert to physics-only envelope"
+        - "Log corruption details"
+      if_widespread:
+        - "Clear all learning for track"
+        - "Announce 'Learning' (restarting)"
+        
+    degradation:
+      level: "MODERATE"
+      action: "Physics-only envelopes (0.70 margin)"
+      
+    recovery:
+      trigger: "Fresh learning data passes validation"
+      action: "Resume adaptive envelopes"
+      
+    prevention:
+      - "Validation on every write"
+      - "Atomic updates (no partial writes)"
+      - "Checksums on stored learning data"
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 LEARNING_STALE
+  # ---------------------------------------------------------------------------
+  LEARNING_STALE:
+    
+    description: |
+      Learned data is old. May not reflect current conditions.
+      
+    detection:
+      conditions:
+        - "No observations in last 5 sessions"
+        - "Data age > 30 days"
+        - "Session conditions differ (temp, weather)"
+        
+    response:
+      - "Apply staleness discount to learning confidence"
+      - "Weight physics envelope more heavily"
+      - "Flag learning as 'stale' in logs"
+      
+    degradation:
+      level: "MILD"
+      action: "Reduce learning blend factor by 50%"
+      
+    recovery:
+      trigger: "New observations added"
+      action: "Refresh learning confidence"
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 ENVELOPE_INVALID
+  # ---------------------------------------------------------------------------
+  ENVELOPE_INVALID:
+    
+    description: |
+      Computed envelope fails sanity checks.
+      
+    detection:
+      checks:
+        - "Corner speed envelope > 300 km/h (unrealistic)"
+        - "Braking distance < 10m at high speed (impossible)"
+        - "Envelope values are negative (invalid)"
+        - "Envelope > physics × 1.0 (ceiling exceeded)"
+        
+    response:
+      immediate:
+        - "Reject invalid envelope"
+        - "Use physics × 0.70 (conservative default)"
+        - "Log validation failure"
+        
+    degradation:
+      level: "MODERATE"
+      action: "Fall back to conservative physics"
+      
+    prevention:
+      - "Clamp all envelopes to physics ceiling"
+      - "Validate before every use"
+
+# =============================================================================
+# SECTION 5: VOICE SYSTEM FAILURES
+# =============================================================================
+
+voice_failures:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 VOICE_SYSTEM_FAILURE
+  # ---------------------------------------------------------------------------
+  VOICE_SYSTEM_FAILURE:
+    
+    description: |
+      Voice output system not functioning. Cannot speak.
+      
+    detection:
+      conditions:
+        - "Audio thread not responding"
+        - "Audio queue permanently full"
+        - "Repeated playback failures"
+        
+    response:
+      immediate:
+        - "Set voice_available = FALSE"
+        - "Continue all computation (voice is optional)"
+        - "Ensure UI shows status"
+        
+    degradation:
+      level: "MODERATE"
+      capabilities_lost:
+        - "All voice output"
+      capabilities_retained:
+        - "All computation and detection"
+        - "UI display"
+        - "Logging"
+        
+    impact_on_safety:
+      level: "REDUCED but acceptable"
+      rationale: |
+        Voice is advisory only. Driver can still drive safely.
+        System continues to detect and log. UI can show alerts.
+        
+    recovery:
+      trigger: "Audio thread restored"
+      action: "Resume voice output"
+      
+  # ---------------------------------------------------------------------------
+  # 5.2 AUDIO_DEVICE_FAILURE
+  # ---------------------------------------------------------------------------
+  AUDIO_DEVICE_FAILURE:
+    
+    description: |
+      Audio hardware or driver not available.
+      
+    detection:
+      conditions:
+        - "Audio device open fails"
+        - "Audio write returns error"
+        - "Audio device disconnected (Bluetooth)"
+        
+    response:
+      immediate:
+        - "Attempt fallback audio device"
+        - "If no fallback, disable voice"
+        
+    smartphone_specific:
+      bluetooth_disconnect:
+        - "Fall back to speaker"
+        - "Or continue without voice"
+        
+    recovery:
+      trigger: "Audio device available"
+      action: "Attempt to reinitialize"
+      
+  # ---------------------------------------------------------------------------
+  # 5.3 TTS_FAILURE
+  # ---------------------------------------------------------------------------
+  TTS_FAILURE:
+    
+    description: |
+      Text-to-speech engine fails to generate audio.
+      
+    detection:
+      condition: "TTS returns error or times out"
+      
+    response:
+      if_using_runtime_tts:
+        - "Skip this phrase"
+        - "Continue with next"
+        
+    mitigation:
+      strategy: "Pre-generate all phrases"
+      action: "TTS failure only affects dynamic content (lap times)"
+      
+    degradation:
+      level: "MILD"
+      action: "Skip dynamic phrases, use pre-generated only"
+
+# =============================================================================
+# SECTION 6: RUNTIME FAILURES
+# =============================================================================
+
+runtime_failures:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 RUNTIME_OVERLOAD
+  # ---------------------------------------------------------------------------
+  RUNTIME_OVERLOAD:
+    
+    description: |
+      Main processing loop cannot keep up with timing requirements.
+      
+    detection:
+      conditions:
+        - "Cycle time > deadline (18ms)"
+        - "Consecutive deadline misses > 3"
+        - "Queue depths growing"
+        
+    response:
+      immediate:
+        - "Log overload event"
+        - "Reduce processing load"
+      load_shedding:
+        order:
+          1: "Skip UI updates"
+          2: "Reduce logging verbosity"
+          3: "Skip non-essential statistics"
+          4: "Reduce detection sensitivity"
+          
+    degradation:
+      level: "MODERATE to SEVERE"
+      action: "Maintain core safety functions, shed extras"
+      
+    recovery:
+      trigger: "Cycle time returns to normal"
+      action: "Gradually restore shed functions"
+      
+    prevention:
+      - "Profile worst-case execution time"
+      - "Budget cycles conservatively"
+      - "Avoid dynamic allocation"
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 MEMORY_EXHAUSTION
+  # ---------------------------------------------------------------------------
+  MEMORY_EXHAUSTION:
+    
+    description: |
+      Out of memory or near memory limit.
+      
+    detection:
+      smartphone:
+        - "OS memory warning callback"
+        - "Allocation failure"
+      embedded:
+        - "Static: should not occur"
+        - "Pool exhaustion"
+        
+    response:
+      immediate:
+        - "Release non-essential buffers"
+        - "Clear caches"
+        - "Reduce log buffer"
+      if_critical:
+        - "Graceful shutdown"
+        - "Preserve critical logs"
+        
+    degradation:
+      level: "SEVERE"
+      action: "Shed all non-essential, maintain core loop"
+      
+    prevention:
+      - "Pre-allocate at startup"
+      - "Bound all dynamic structures"
+      - "Monitor memory continuously"
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 THREAD_FAILURE
+  # ---------------------------------------------------------------------------
+  THREAD_FAILURE:
+    
+    description: |
+      A thread has crashed or become unresponsive.
+      
+    detection:
+      method: "Heartbeat monitoring"
+      condition: "No heartbeat for >1 second"
+      
+    response:
+      by_thread:
+        
+        MAIN:
+          action: "CRITICAL - attempt restart"
+          if_fails: "System is non-functional"
+          
+        SENSOR:
+          action: "Enter GPS-only or no-sensor mode"
+          restart: "Attempt thread restart"
+          
+        VOICE:
+          action: "Disable voice output"
+          restart: "Attempt thread restart"
+          computation_continues: true
+          
+        UI:
+          action: "UI frozen but system continues"
+          restart: "Attempt thread restart"
+          computation_continues: true
+          
+        LOGGING:
+          action: "In-memory buffer only"
+          data_loss: "Possible"
+          computation_continues: true
+          
+    degradation:
+      depends_on_thread: true
+      
+    recovery:
+      action: "Restart failed thread"
+      validation: "Thread responds to heartbeat"
+      
+  # ---------------------------------------------------------------------------
+  # 6.4 WATCHDOG_TIMEOUT
+  # ---------------------------------------------------------------------------
+  WATCHDOG_TIMEOUT:
+    
+    description: |
+      Main thread has not kicked watchdog. Likely hung.
+      
+    detection:
+      mechanism: "Hardware or software watchdog timer"
+      timeout_ms: 100
+      
+    response:
+      embedded:
+        action: "System reset"
+        preserve: "Log last known state to persistent storage"
+        
+      smartphone:
+        action: "Attempt thread termination and restart"
+        if_fails: "Kill and restart app"
+        
+    severity: "CRITICAL"
+    
+    prevention:
+      - "Kick watchdog every MAIN cycle"
+      - "No blocking operations in MAIN"
+      - "Bound all loops"
+
+# =============================================================================
+# SECTION 7: DEGRADATION STRATEGY
+# =============================================================================
+
+degradation_strategy:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 DEGRADATION LEVELS
+  # ---------------------------------------------------------------------------
+  levels:
+    
+    FULL:
+      description: "All systems nominal"
+      capabilities: "All"
+      
+    REDUCED:
+      description: "Minor degradation, most capabilities available"
+      examples:
+        - "GPS quality reduced"
+        - "Learning stale"
+      capabilities:
+        lost: "High-confidence callouts for affected segments"
+        retained: "Most coaching"
+        
+    LIMITED:
+      description: "Significant degradation, core capabilities only"
+      examples:
+        - "GPS loss"
+        - "Learning corrupted"
+      capabilities:
+        lost:
+          - "Position-based callouts"
+          - "Learned envelopes"
+        retained:
+          - "IMU-based deviation detection"
+          - "Physics-only envelopes"
+          - "Logging"
+          
+    MINIMAL:
+      description: "Severe degradation, safety functions only"
+      examples:
+        - "Multiple sensor failures"
+        - "Runtime overload"
+      capabilities:
+        lost:
+          - "All coaching"
+          - "Envelope calculation"
+        retained:
+          - "Recording for post-analysis"
+          - "System monitoring"
+          
+    OFFLINE:
+      description: "System non-functional"
+      trigger: "MAIN thread failure, memory exhaustion"
+      action: "Attempt safe shutdown, preserve logs"
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 DEGRADATION TRANSITIONS
+  # ---------------------------------------------------------------------------
+  transitions:
+    
+    downgrade:
+      trigger: "Failure detected"
+      action: "Immediate transition to appropriate level"
+      announcement: "If voice available: status phrase"
+      
+    upgrade:
+      trigger: "Failure resolved"
+      action: "Gradual restoration"
+      delay: "Validate recovery before upgrading"
+      
+    hysteresis:
+      description: "Prevent rapid oscillation"
+      upgrade_delay_ms: 5000
+      
+  # ---------------------------------------------------------------------------
+  # 7.3 CAPABILITY MATRIX
+  # ---------------------------------------------------------------------------
+  capability_matrix:
+    
+    columns:
+      - "Capability"
+      - "FULL"
+      - "REDUCED"
+      - "LIMITED"
+      - "MINIMAL"
+      
+    rows:
+      - capability: "Position-based callouts"
+        FULL: "✓"
+        REDUCED: "Degraded"
+        LIMITED: "✗"
+        MINIMAL: "✗"
+        
+      - capability: "Speed-based callouts"
+        FULL: "✓"
+        REDUCED: "✓"
+        LIMITED: "Degraded"
+        MINIMAL: "✗"
+        
+      - capability: "Deviation detection"
+        FULL: "✓"
+        REDUCED: "✓"
+        LIMITED: "Degraded"
+        MINIMAL: "✗"
+        
+      - capability: "Learned envelopes"
+        FULL: "✓"
+        REDUCED: "Degraded"
+        LIMITED: "✗"
+        MINIMAL: "✗"
+        
+      - capability: "Physics envelopes"
+        FULL: "✓"
+        REDUCED: "✓"
+        LIMITED: "✓"
+        MINIMAL: "✗"
+        
+      - capability: "Voice output"
+        FULL: "✓"
+        REDUCED: "✓"
+        LIMITED: "Limited"
+        MINIMAL: "Status only"
+        
+      - capability: "Logging"
+        FULL: "✓"
+        REDUCED: "✓"
+        LIMITED: "✓"
+        MINIMAL: "✓"
+        
+      - capability: "UI display"
+        FULL: "✓"
+        REDUCED: "✓"
+        LIMITED: "✓"
+        MINIMAL: "Limited"
+
+# =============================================================================
+# SECTION 8: FAIL SILENT GUARANTEE
+# =============================================================================
+
+fail_silent:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 GUARANTEE STATEMENT
+  # ---------------------------------------------------------------------------
+  guarantee:
+    
+    statement: |
+      The system will NEVER provide incorrect advice.
+      When in doubt, the system is SILENT.
+      Silence is always safe.
+      
+    formalization: |
+      IF confidence(advice) < threshold THEN
+        advice = SILENCE
+        
+      For all failure modes:
+        response includes suppression of affected outputs
+        
+  # ---------------------------------------------------------------------------
+  # 8.2 IMPLEMENTATION
+  # ---------------------------------------------------------------------------
+  implementation:
+    
+    confidence_gating:
+      - "Every output has confidence requirement"
+      - "Output suppressed if confidence below threshold"
+      
+    validation_gates:
+      - "Every calculation validated before use"
+      - "Invalid calculations produce SILENCE, not default"
+      
+    unknown_states:
+      - "Unknown is treated as unsafe"
+      - "Safe state for unknown = SILENCE"
+      
+  # ---------------------------------------------------------------------------
+  # 8.3 FAILURE RESPONSE SUMMARY
+  # ---------------------------------------------------------------------------
+  response_summary:
+    
+    sensor_failures:
+      GPS_LOSS: "→ Silence on position-based output"
+      IMU_LOSS: "→ Silence on acceleration-based output"
+      DISAGREEMENT: "→ Silence on affected metric"
+      
+    geometry_failures:
+      LOW_CONFIDENCE: "→ Silence on affected segments"
+      CORRUPTION: "→ Silence until geometry rebuilt"
+      LOCALIZATION: "→ Silence on all position-based"
+      
+    learning_failures:
+      CORRUPTION: "→ Fall back to physics (more conservative)"
+      STALE: "→ Reduce learning confidence"
+      INVALID: "→ Use conservative physics default"
+      
+    voice_failures:
+      ANY_VOICE_FAILURE: "→ System continues, no voice (acceptable)"
+      
+    runtime_failures:
+      OVERLOAD: "→ Shed non-essential, maintain safety"
+      MEMORY: "→ Shed non-essential, maintain safety"
+      THREAD: "→ Depends on thread (MAIN critical)"
+      
+  # ---------------------------------------------------------------------------
+  # 8.4 NEVER BEHAVIORS
+  # ---------------------------------------------------------------------------
+  never:
+    
+    - never: "Guess a position when GPS is lost"
+    - never: "Use stale data without marking confidence"
+    - never: "Provide advice based on invalid envelope"
+    - never: "Continue voice if confidence too low"
+    - never: "Crash and lose logging"
+    - never: "Block main loop for any reason"
+    - never: "Give wrong advice to avoid silence"
+
+# =============================================================================
+# SECTION 9: RECOVERY PROCEDURES
+# =============================================================================
+
+recovery:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 AUTOMATIC RECOVERY
+  # ---------------------------------------------------------------------------
+  automatic:
+    
+    sensor_recovery:
+      trigger: "Sensor data resumes"
+      validation:
+        - "Multiple consecutive valid samples"
+        - "Data passes sanity checks"
+        - "Agreement with other sensors"
+      action:
+        - "Gradually restore confidence"
+        - "Resume affected outputs"
+        
+    geometry_recovery:
+      trigger: "Geometry rebuilt or validated"
+      action:
+        - "Resume position-based coaching"
+        
+    learning_recovery:
+      trigger: "New valid learning data"
+      action:
+        - "Resume adaptive envelopes"
+        
+    voice_recovery:
+      trigger: "Audio system available"
+      action:
+        - "Resume voice output"
+        - "Announce 'Ready' if was in degraded state"
+        
+  # ---------------------------------------------------------------------------
+  # 9.2 MANUAL RECOVERY
+  # ---------------------------------------------------------------------------
+  manual:
+    
+    clear_learning:
+      when: "Learning appears corrupted"
+      action: "User triggers 'Clear Track Data'"
+      effect: "Learning restarts from zero"
+      
+    reset_system:
+      when: "System in unknown bad state"
+      action: "App restart"
+      effect: "Fresh initialization"
+      
+    factory_reset:
+      when: "Persistent problems"
+      action: "Clear all data"
+      effect: "Return to first-run state"
+      
+  # ---------------------------------------------------------------------------
+  # 9.3 RECOVERY VALIDATION
+  # ---------------------------------------------------------------------------
+  validation:
+    
+    principle: |
+      Recovery is not instant. Validate before restoring capability.
+      
+    requirements:
+      sensor: "Multiple valid samples in a row"
+      geometry: "Passes all sanity checks"
+      learning: "Passes validation, reasonable values"
+      voice: "Test phrase plays successfully"
+      
+    gradual_restoration:
+      - "Restore at reduced confidence first"
+      - "Increase confidence over time/samples"
+      - "Full confidence only after extended success"
+
+# =============================================================================
+# SECTION 10: MONITORING AND ALERTING
+# =============================================================================
+
+monitoring:
+
+  # ---------------------------------------------------------------------------
+  # 10.1 FAILURE TRACKING
+  # ---------------------------------------------------------------------------
+  tracking:
+    
+    per_session:
+      - failure_type
+      - count
+      - first_occurrence_timestamp
+      - last_occurrence_timestamp
+      - duration_total
+      - recovery_count
+      
+    persistent:
+      - "Store failure history for trend analysis"
+      - "Identify recurring failure patterns"
+      
+  # ---------------------------------------------------------------------------
+  # 10.2 DRIVER NOTIFICATION
+  # ---------------------------------------------------------------------------
+  driver_notification:
+    
+    voice:
+      degraded_state: "'Standby'"
+      recovery: "'Ready'"
+      offline: "'Offline'"
+      
+    ui:
+      status_indicator: "Color/icon shows system state"
+      
+    principle: |
+      Driver knows system state without detail.
+      'Standby' = reduced capability, don't rely on coaching.
+      'Ready' = normal operation.
+      'Offline' = no coaching available.
+      
+  # ---------------------------------------------------------------------------
+  # 10.3 POST-SESSION REPORTING
+  # ---------------------------------------------------------------------------
+  reporting:
+    
+    failure_summary:
+      - "List of all failures during session"
+      - "Duration of degraded operation"
+      - "Percentage of session in each mode"
+      
+    recommendations:
+      - "If GPS failures: check mounting/obstructions"
+      - "If IMU failures: check device orientation"
+      - "If runtime overload: close other apps"
+
+# =============================================================================
+# END OF FAILURE MODES SPECIFICATION
+# =============================================================================

@@ -1,0 +1,863 @@
+# =============================================================================
+# VOICE ARBITRATION LOGIC
+# Safety-Critical Adaptive AI Race Coaching System
+# =============================================================================
+#
+# GOVERNING PRINCIPLE: Voice must never block computation.
+# Silence wins conflicts by default.
+#
+# PURPOSE:
+#   Determine WHAT to say, WHEN to say it, and WHETHER to say it.
+#   Resolve conflicts between competing messages.
+#   Enforce timing, frequency, and priority rules.
+#
+# CORE INVARIANTS:
+#   1. Voice output is fire-and-forget (never blocks main loop)
+#   2. Silence is always safe (no penalty for not speaking)
+#   3. Conflicts resolve to silence (not to arbitrary choice)
+#   4. Emergency messages override normal arbitration
+#
+# =============================================================================
+
+version: "1.0"
+revision_date: "2026-02-02"
+classification: "VOICE_CONTROL"
+
+# =============================================================================
+# SECTION 1: ARBITRATION ARCHITECTURE
+# =============================================================================
+
+architecture:
+
+  # ---------------------------------------------------------------------------
+  # 1.1 SYSTEM OVERVIEW
+  # ---------------------------------------------------------------------------
+  overview:
+    
+    inputs:
+      - "Deviation flags (from deviation_detection)"
+      - "Segment context (from geometry)"
+      - "Timing windows (from driver_attention_model)"
+      - "Confidence levels (from multiple sources)"
+      - "Message queue (pending messages)"
+      
+    outputs:
+      - "Voice command (phrase_id, priority)"
+      - "OR silence (explicit decision)"
+      
+    processing:
+      - "Non-blocking (async voice generation)"
+      - "Stateless per-decision (no hidden state)"
+      - "Deterministic (same inputs → same output)"
+      
+  # ---------------------------------------------------------------------------
+  # 1.2 MESSAGE LIFECYCLE
+  # ---------------------------------------------------------------------------
+  message_lifecycle:
+    
+    states:
+      
+      GENERATED:
+        description: "Message created by source system"
+        duration: "Instantaneous"
+        
+      QUEUED:
+        description: "Message waiting for arbitration"
+        max_duration_ms: "Varies by priority"
+        
+      ARBITRATING:
+        description: "Message being evaluated"
+        duration: "< 1ms"
+        
+      APPROVED:
+        description: "Message cleared to speak"
+        duration: "Until delivery or timeout"
+        
+      SPEAKING:
+        description: "Audio output in progress"
+        duration: "Phrase duration"
+        
+      DELIVERED:
+        description: "Message complete"
+        terminal: true
+        
+      DROPPED:
+        description: "Message discarded"
+        terminal: true
+        reasons:
+          - "Lower priority displaced"
+          - "Expired (max delay exceeded)"
+          - "Suppressed (rule violation)"
+          - "Conflict (resolved to silence)"
+          
+  # ---------------------------------------------------------------------------
+  # 1.3 QUEUE STRUCTURE
+  # ---------------------------------------------------------------------------
+  queue:
+    
+    type: "Priority queue with expiry"
+    max_depth: 3
+    
+    ordering: "Highest priority first, then FIFO within priority"
+    
+    expiry_behavior:
+      on_expiry: "Message dropped silently"
+      check_frequency: "Every arbitration cycle"
+      
+    overflow_behavior:
+      action: "Drop lowest priority message"
+      tie_breaker: "Drop oldest"
+
+# =============================================================================
+# SECTION 2: PRIORITY RESOLUTION
+# =============================================================================
+
+priority_resolution:
+
+  # ---------------------------------------------------------------------------
+  # 2.1 PRIORITY LEVELS
+  # ---------------------------------------------------------------------------
+  priority_levels:
+    
+    CRITICAL:
+      value: 4
+      max_delay_ms: 0
+      description: "Safety-critical, immediate delivery"
+      preempts_speech: true
+      overrides_prohibitions: true  # Except active braking/apex
+      examples:
+        - "FLAG"
+        - "CAUTION"
+        
+    HIGH:
+      value: 3
+      max_delay_ms: 1000
+      description: "Time-sensitive coaching"
+      preempts_speech: false
+      overrides_prohibitions: false
+      examples:
+        - "BRAKE"
+        - "BRAKE_HARD"
+        - "TOO_FAST"
+        - "SLOW"
+        
+    MEDIUM:
+      value: 2
+      max_delay_ms: 5000
+      description: "Useful but deferrable"
+      preempts_speech: false
+      overrides_prohibitions: false
+      examples:
+        - "SPEED_*"
+        - "EASY"
+        - "POWER"
+        
+    LOW:
+      value: 1
+      max_delay_ms: 10000
+      description: "Nice to have, easily dropped"
+      preempts_speech: false
+      overrides_prohibitions: false
+      examples:
+        - "GOOD"
+        - "OKAY"
+        - "DELTA"
+        
+  # ---------------------------------------------------------------------------
+  # 2.2 PRIORITY COMPARISON
+  # ---------------------------------------------------------------------------
+  priority_comparison:
+    
+    rules:
+      
+      - rule: "Higher numeric priority wins"
+        formula: "winner = max(msg_a.priority, msg_b.priority)"
+        
+      - rule: "Equal priority: first queued wins"
+        formula: "winner = earliest_timestamp"
+        
+      - rule: "Equal priority and time: drop both (silence)"
+        rationale: "Ambiguous choice → no choice"
+        
+  # ---------------------------------------------------------------------------
+  # 2.3 PRIORITY DECAY
+  # ---------------------------------------------------------------------------
+  priority_decay:
+    
+    description: |
+      Message priority decays as it ages. An old message should not
+      block newer, more relevant messages.
+      
+    formula: |
+      effective_priority = base_priority × (1 - age_ms / max_delay_ms)
+      
+    example:
+      base_priority: 3  # HIGH
+      max_delay_ms: 1000
+      at_age_0ms: 3.0
+      at_age_500ms: 1.5
+      at_age_1000ms: 0.0  # Expired
+      
+    effect: |
+      Young messages outcompete old messages of same base priority.
+      Expired messages have zero priority and are dropped.
+      
+  # ---------------------------------------------------------------------------
+  # 2.4 PRIORITY BOOSTING
+  # ---------------------------------------------------------------------------
+  priority_boosting:
+    
+    description: |
+      Certain contexts temporarily boost message priority.
+      
+    boosts:
+      
+      - context: "Approaching brake point"
+        distance: "< 100m"
+        boost: "+1 for BRAKE messages"
+        
+      - context: "High deviation severity"
+        condition: "severity == HIGH"
+        boost: "+1 for warning messages"
+        
+      - context: "Low confidence"
+        condition: "confidence < 0.70"
+        boost: "-1 for all non-CRITICAL"
+        note: "Reduces speech when uncertain"
+
+# =============================================================================
+# SECTION 3: SUPPRESSION RULES
+# =============================================================================
+
+suppression_rules:
+
+  # ---------------------------------------------------------------------------
+  # 3.1 PROHIBITION SUPPRESSION
+  # ---------------------------------------------------------------------------
+  prohibition_suppression:
+    
+    description: |
+      Messages are suppressed (not delivered) when prohibitions are active.
+      These are absolute rules from driver_attention_model.
+      
+    prohibitions:
+      
+      - prohibition: "ACTIVE_BRAKING"
+        condition: "a_longitudinal < -0.5g"
+        suppresses: "ALL except CRITICAL"
+        
+      - prohibition: "CORNER_ENTRY"
+        condition: "segment == CORNER_ENTRY AND in_corner"
+        suppresses: "ALL except CRITICAL"
+        
+      - prohibition: "CORNER_APEX"
+        condition: "segment == CORNER_APEX"
+        suppresses: "ALL except CRITICAL"
+        
+      - prohibition: "ACTIVE_DEVIATION"
+        condition: "any_deviation_flag.severity >= MEDIUM"
+        suppresses: "LOW and MEDIUM priority"
+        
+      - prohibition: "LOW_CONFIDENCE"
+        condition: "combined_confidence < 0.60"
+        suppresses: "ALL"
+        
+      - prohibition: "RECOVERY_PERIOD"
+        condition: "deviation_cleared < 2000ms ago"
+        suppresses: "LOW and MEDIUM priority"
+        
+  # ---------------------------------------------------------------------------
+  # 3.2 COOLDOWN SUPPRESSION
+  # ---------------------------------------------------------------------------
+  cooldown_suppression:
+    
+    description: |
+      Enforce minimum time between utterances.
+      
+    global_cooldown:
+      duration_ms: 3000
+      applies_to: "ALL messages"
+      exception: "CRITICAL priority"
+      
+    per_type_cooldown:
+      BRAKE: 10000
+      SPEED: 10000
+      WARNING: 5000
+      ACKNOWLEDGMENT: 15000
+      
+    per_corner_limit:
+      max_messages: 2
+      scope: "From corner approach to corner exit"
+      
+  # ---------------------------------------------------------------------------
+  # 3.3 RATE LIMIT SUPPRESSION
+  # ---------------------------------------------------------------------------
+  rate_limit_suppression:
+    
+    per_lap:
+      max_utterances: 15
+      behavior_at_limit:
+        10_remaining: "Suppress LOW priority"
+        5_remaining: "Suppress LOW and MEDIUM"
+        0_remaining: "Suppress all non-CRITICAL"
+        
+    per_minute:
+      max_utterances: 8
+      behavior_at_limit: "Suppress lowest priority first"
+      
+  # ---------------------------------------------------------------------------
+  # 3.4 CONTENT SUPPRESSION
+  # ---------------------------------------------------------------------------
+  content_suppression:
+    
+    redundancy:
+      rule: "Do not repeat same message for same corner"
+      exception: "CRITICAL messages may repeat up to 3x"
+      
+    irrelevance:
+      rule: "Suppress messages that no longer apply"
+      example: "BRAKE message when driver already braking"
+      
+    low_value:
+      rule: "Suppress acknowledgments when driver performing well"
+      condition: "last_N_corners all executed cleanly"
+      N: 3
+
+# =============================================================================
+# SECTION 4: TIMING RULES
+# =============================================================================
+
+timing_rules:
+
+  # ---------------------------------------------------------------------------
+  # 4.1 WINDOW DETECTION
+  # ---------------------------------------------------------------------------
+  window_detection:
+    
+    description: |
+      Identify when speech is allowed based on current driving state.
+      
+    windows:
+      
+      STRAIGHT_MID:
+        condition: |
+          segment_type == STRAIGHT AND
+          distance_from_corner_exit > 50m AND
+          distance_to_braking_point > 100m
+        quality: "BEST"
+        
+      CORNER_EXIT:
+        condition: |
+          segment_type == CORNER_EXIT AND
+          a_lateral < 0.3g
+        quality: "GOOD"
+        
+      APPROACH_EARLY:
+        condition: |
+          distance_to_corner > 150m AND
+          segment_type == STRAIGHT
+        quality: "ACCEPTABLE"
+        
+    no_window:
+      condition: "None of the above"
+      action: "DEFER or DROP message"
+      
+  # ---------------------------------------------------------------------------
+  # 4.2 MESSAGE TIMING
+  # ---------------------------------------------------------------------------
+  message_timing:
+    
+    brake_reference:
+      target: "300ms before brake point"
+      tolerance: "±100ms"
+      early_ok: true
+      late_ok: false  # Late brake call is worse than no call
+      
+    speed_reference:
+      target: "During approach, >100m from corner"
+      tolerance: "Wide (anytime in window)"
+      
+    warning:
+      target: "Immediately when detected"
+      tolerance: "0ms"
+      delivery: "Next available window or immediate if HIGH"
+      
+    acknowledgment:
+      target: "1-2 seconds after segment exit"
+      tolerance: "Wide"
+      easily_deferred: true
+      
+  # ---------------------------------------------------------------------------
+  # 4.3 DEFERRED DELIVERY
+  # ---------------------------------------------------------------------------
+  deferred_delivery:
+    
+    description: |
+      When message cannot be delivered immediately, it may be deferred
+      to the next available window.
+      
+    deferrable:
+      - "MEDIUM priority (up to max_delay)"
+      - "LOW priority (up to max_delay)"
+      
+    not_deferrable:
+      - "CRITICAL (deliver or drop)"
+      - "HIGH (short defer window)"
+      
+    deferral_limit:
+      max_defer_ms: "max_delay for priority level"
+      behavior_at_limit: "DROP message"
+      
+  # ---------------------------------------------------------------------------
+  # 4.4 DELIVERY CONFIRMATION
+  # ---------------------------------------------------------------------------
+  delivery_confirmation:
+    
+    async_model: |
+      Voice generation is asynchronous.
+      Arbitrator does not wait for audio completion.
+      
+    confirmation:
+      - "Message handed to audio system"
+      - "Audio system confirms queued"
+      - "No further tracking (fire-and-forget)"
+      
+    failure_handling:
+      audio_queue_full: "DROP message, log event"
+      audio_system_error: "DROP message, disable voice temporarily"
+
+# =============================================================================
+# SECTION 5: CONFLICT HANDLING
+# =============================================================================
+
+conflict_handling:
+
+  # ---------------------------------------------------------------------------
+  # 5.1 CONFLICT DEFINITION
+  # ---------------------------------------------------------------------------
+  conflict_definition:
+    
+    description: |
+      A conflict occurs when multiple messages compete for delivery
+      at the same time.
+      
+    types:
+      
+      - type: "Queue conflict"
+        description: "Multiple messages queued, only one can be next"
+        resolution: "Priority comparison"
+        
+      - type: "Timing conflict"
+        description: "Message approved but window closed"
+        resolution: "Defer or drop"
+        
+      - type: "Semantic conflict"
+        description: "Messages contradict each other"
+        resolution: "SILENCE (neither delivered)"
+        
+  # ---------------------------------------------------------------------------
+  # 5.2 CONFLICT RESOLUTION
+  # ---------------------------------------------------------------------------
+  conflict_resolution:
+    
+    algorithm: |
+      1. Compute effective priority for all queued messages
+      2. Remove expired messages (effective_priority <= 0)
+      3. Remove suppressed messages (prohibition/cooldown)
+      4. If queue empty → SILENCE
+      5. If single message → CANDIDATE
+      6. If multiple messages:
+         a. If clear winner (priority gap > 0.5) → WINNER
+         b. If tie → SILENCE (conflict resolved to silence)
+      7. Check timing window for CANDIDATE
+         a. If window open → DELIVER
+         b. If window closed AND deferrable → DEFER
+         c. If window closed AND not deferrable → DROP
+         
+    silence_wins_ties:
+      principle: |
+        When priority is too close to call, silence is correct.
+        Arbitrary selection risks wrong message at wrong time.
+        
+      threshold: 0.5
+      interpretation: |
+        If |priority_a - priority_b| < 0.5 AND both contending
+        → DROP both → SILENCE
+        
+  # ---------------------------------------------------------------------------
+  # 5.3 SEMANTIC CONFLICT DETECTION
+  # ---------------------------------------------------------------------------
+  semantic_conflicts:
+    
+    description: |
+      Some message combinations are contradictory and should both
+      be suppressed rather than choosing one.
+      
+    conflict_pairs:
+      
+      - pair: ["BRAKE", "POWER"]
+        conflict: "Cannot brake and apply power"
+        resolution: "SILENCE"
+        
+      - pair: ["TOO_FAST", "GOOD"]
+        conflict: "Contradictory feedback"
+        resolution: "SILENCE"
+        
+      - pair: ["SLOW", "FULL"]
+        conflict: "Contradictory speed guidance"
+        resolution: "SILENCE"
+        
+    detection: |
+      When message approved, check queue for conflicts.
+      If conflict exists, drop both messages.
+      
+  # ---------------------------------------------------------------------------
+  # 5.4 PREEMPTION RULES
+  # ---------------------------------------------------------------------------
+  preemption:
+    
+    during_speech:
+      
+      CRITICAL_arrives:
+        action: "Interrupt current speech immediately"
+        method: "Stop audio, start new phrase"
+        applies_when: "Always"
+        
+      HIGH_arrives:
+        action: "Wait for current speech to complete"
+        rationale: "Interruption is disorienting"
+        
+      MEDIUM_or_LOW_arrives:
+        action: "Queue behind current speech"
+        may_expire: true
+        
+    preemption_cooldown:
+      after_interruption_ms: 1000
+      rationale: "Avoid rapid-fire interruptions"
+
+# =============================================================================
+# SECTION 6: EMERGENCY INTERRUPTION
+# =============================================================================
+
+emergency_interruption:
+
+  # ---------------------------------------------------------------------------
+  # 6.1 EMERGENCY DEFINITION
+  # ---------------------------------------------------------------------------
+  emergency_definition:
+    
+    criteria: "CRITICAL priority AND immediate safety concern"
+    
+    examples:
+      - "Yellow/red flag detected"
+      - "Incident on track"
+      - "Critical system failure"
+      
+    not_emergency:
+      - "Deviation warning (even HIGH severity)"
+      - "Brake reference (driver error, not external hazard)"
+      
+  # ---------------------------------------------------------------------------
+  # 6.2 EMERGENCY BEHAVIOR
+  # ---------------------------------------------------------------------------
+  emergency_behavior:
+    
+    delivery:
+      - "Bypass normal queue"
+      - "Interrupt current speech (if any)"
+      - "Deliver immediately"
+      - "Override most prohibitions"
+      
+    prohibitions_respected:
+      - "ACTIVE_BRAKING (driver cannot react anyway)"
+      - "CORNER_APEX (same reason)"
+      
+    prohibitions_overridden:
+      - "CORNER_EXIT"
+      - "COOLDOWN"
+      - "RATE_LIMIT"
+      
+    repetition:
+      allowed: true
+      max_repeats: 3
+      interval_ms: 1000
+      rationale: "Ensure message heard in noisy environment"
+      
+  # ---------------------------------------------------------------------------
+  # 6.3 EMERGENCY SOURCES
+  # ---------------------------------------------------------------------------
+  emergency_sources:
+    
+    internal:
+      - source: "Critical system failure"
+        message: "OFFLINE"
+        action: "Alert driver, cease coaching"
+        
+    external:
+      - source: "Flag detection (future feature)"
+        message: "FLAG"
+        action: "Alert driver immediately"
+        
+      - source: "Incident detection (future feature)"
+        message: "CAUTION"
+        action: "Alert driver immediately"
+
+# =============================================================================
+# SECTION 7: NON-BLOCKING GUARANTEE
+# =============================================================================
+
+non_blocking:
+
+  # ---------------------------------------------------------------------------
+  # 7.1 ARCHITECTURE REQUIREMENT
+  # ---------------------------------------------------------------------------
+  requirement:
+    
+    statement: |
+      Voice output must NEVER block the main computation loop.
+      Arbitration must complete in bounded time.
+      Audio generation must be asynchronous.
+      
+    rationale: |
+      The main loop processes sensors at 50Hz (20ms cycle).
+      Voice arbitration must complete within this cycle.
+      Audio generation takes 50-200ms and cannot block.
+      
+  # ---------------------------------------------------------------------------
+  # 7.2 IMPLEMENTATION APPROACH
+  # ---------------------------------------------------------------------------
+  implementation:
+    
+    arbitration:
+      max_duration_us: 500  # 0.5ms
+      method: "Synchronous, bounded algorithm"
+      no_io: "No blocking I/O in arbitration"
+      
+    audio_generation:
+      method: "Async handoff to audio thread"
+      handoff: "Lock-free queue to audio system"
+      timeout: "If queue full, drop message (no wait)"
+      
+    audio_playback:
+      method: "Separate audio thread"
+      isolation: "Complete isolation from main loop"
+      failure: "Audio errors do not affect computation"
+      
+  # ---------------------------------------------------------------------------
+  # 7.3 TIMING GUARANTEES
+  # ---------------------------------------------------------------------------
+  timing:
+    
+    arbitration_budget_us: 500
+    queue_handoff_us: 50
+    total_voice_overhead_us: 550
+    
+    main_loop_budget_ms: 20
+    voice_percentage: 2.75%  # 0.55ms / 20ms
+    
+    guarantee: |
+      Voice system consumes < 3% of main loop budget.
+      This leaves 97% for sensor processing, detection, etc.
+
+# =============================================================================
+# SECTION 8: STATE MACHINE
+# =============================================================================
+
+state_machine:
+
+  # ---------------------------------------------------------------------------
+  # 8.1 ARBITRATOR STATES
+  # ---------------------------------------------------------------------------
+  states:
+    
+    IDLE:
+      description: "No pending messages, no speech in progress"
+      on_message_queued: "→ EVALUATING"
+      
+    EVALUATING:
+      description: "Processing queued messages"
+      duration: "< 500μs"
+      outcomes:
+        message_approved: "→ PENDING_DELIVERY"
+        no_message: "→ IDLE"
+        conflict: "→ IDLE (silence)"
+        
+    PENDING_DELIVERY:
+      description: "Waiting for timing window"
+      max_duration: "max_delay for priority"
+      on_window_open: "→ DELIVERING"
+      on_timeout: "→ IDLE (drop)"
+      
+    DELIVERING:
+      description: "Handing message to audio system"
+      duration: "< 50μs (non-blocking)"
+      next: "→ SPEAKING"
+      
+    SPEAKING:
+      description: "Audio playback in progress"
+      tracked_by: "Audio system, not arbitrator"
+      on_complete: "→ COOLDOWN"
+      
+    COOLDOWN:
+      description: "Post-speech cooldown"
+      duration: "global_cooldown_ms"
+      on_expire: "→ IDLE"
+      on_emergency: "→ EVALUATING (override)"
+      
+  # ---------------------------------------------------------------------------
+  # 8.2 STATE TRANSITIONS
+  # ---------------------------------------------------------------------------
+  transitions:
+    
+    - from: "IDLE"
+      to: "EVALUATING"
+      trigger: "message_queued"
+      action: "Begin arbitration"
+      
+    - from: "EVALUATING"
+      to: "PENDING_DELIVERY"
+      trigger: "message_approved"
+      action: "Set delivery deadline"
+      
+    - from: "EVALUATING"
+      to: "IDLE"
+      trigger: "no_valid_message"
+      action: "Clear queue artifacts"
+      
+    - from: "PENDING_DELIVERY"
+      to: "DELIVERING"
+      trigger: "window_open"
+      action: "Initiate handoff"
+      
+    - from: "PENDING_DELIVERY"
+      to: "IDLE"
+      trigger: "timeout OR prohibition"
+      action: "Drop message, log reason"
+      
+    - from: "DELIVERING"
+      to: "SPEAKING"
+      trigger: "handoff_complete"
+      action: "Record delivery timestamp"
+      
+    - from: "SPEAKING"
+      to: "COOLDOWN"
+      trigger: "audio_complete OR estimated_duration"
+      action: "Start cooldown timer"
+      
+    - from: "COOLDOWN"
+      to: "IDLE"
+      trigger: "cooldown_expired"
+      action: "None"
+      
+    - from: "COOLDOWN"
+      to: "EVALUATING"
+      trigger: "emergency_message"
+      action: "Override cooldown"
+
+# =============================================================================
+# SECTION 9: SILENCE AS DEFAULT
+# =============================================================================
+
+silence_default:
+
+  # ---------------------------------------------------------------------------
+  # 9.1 PRINCIPLE
+  # ---------------------------------------------------------------------------
+  principle:
+    
+    statement: |
+      The arbitrator's default output is SILENCE.
+      Speech requires positive justification.
+      All checks must pass for speech to occur.
+      Any single failure results in silence.
+      
+    logic: |
+      speak = (
+        message_exists AND
+        message_valid AND
+        priority_sufficient AND
+        NOT prohibited AND
+        NOT suppressed AND
+        NOT in_cooldown AND
+        NOT rate_limited AND
+        window_open AND
+        confidence_sufficient
+      )
+      
+      IF NOT speak THEN SILENCE
+      
+  # ---------------------------------------------------------------------------
+  # 9.2 SILENCE DECISION
+  # ---------------------------------------------------------------------------
+  silence_decision:
+    
+    is_active_decision: true
+    not_error: true
+    not_failure: true
+    
+    logging:
+      log_silence: false  # Would flood logs
+      log_suppression: true  # Track why messages dropped
+      log_conflict: true  # Track conflict resolutions
+      
+  # ---------------------------------------------------------------------------
+  # 9.3 SILENCE STREAK HANDLING
+  # ---------------------------------------------------------------------------
+  silence_streak:
+    
+    acceptable: "Indefinite"
+    no_forced_speech: true
+    
+    anti_pattern: |
+      DO NOT implement "speak at least once per lap" or similar.
+      Silence is fine. Silence is often correct.
+      The system should not speak just because it hasn't spoken.
+
+# =============================================================================
+# SECTION 10: AUDIT AND LOGGING
+# =============================================================================
+
+audit:
+
+  # ---------------------------------------------------------------------------
+  # 10.1 DECISION LOGGING
+  # ---------------------------------------------------------------------------
+  decision_logging:
+    
+    per_message:
+      logged:
+        - timestamp_ms
+        - message_id
+        - phrase_id
+        - source (what generated the message)
+        - priority_base
+        - priority_effective
+        - outcome (DELIVERED | DROPPED | DEFERRED | SUPPRESSED)
+        - reason (if not delivered)
+        
+    per_cycle:
+      logged:
+        - timestamp_ms
+        - queue_depth
+        - arbitration_duration_us
+        - state_after
+        
+  # ---------------------------------------------------------------------------
+  # 10.2 STATISTICS
+  # ---------------------------------------------------------------------------
+  statistics:
+    
+    tracked:
+      - messages_generated (per session)
+      - messages_delivered (per session)
+      - messages_dropped (per session, by reason)
+      - average_delay_ms (queue to delivery)
+      - silence_percentage (cycles with no speech)
+      
+    reporting:
+      frequency: "Post-session summary"
+      alerts: "If delivery_rate > 80% (speaking too much)"
+
+# =============================================================================
+# END OF VOICE ARBITRATION SPECIFICATION
+# =============================================================================
