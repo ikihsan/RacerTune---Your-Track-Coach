@@ -14,7 +14,12 @@ export function Problem() {
   ]
 
   return (
-    <section ref={sectionRef} className="relative py-32 lg:py-40 overflow-hidden">
+    <section 
+      ref={sectionRef} 
+      className="relative py-32 lg:py-40 overflow-hidden"
+      id="problem"
+      aria-labelledby="problem-heading"
+    >
       {/* Background gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-carbon-950 via-carbon-900 to-carbon-950" />
 
@@ -29,6 +34,7 @@ export function Problem() {
           <span className="inline-block px-4 py-1.5 text-xs font-mono tracking-wider uppercase text-steel-400 border border-subtle rounded-full">
             The Problem
           </span>
+          <h2 id="problem-heading" className="sr-only">Why Traditional Racing Apps Fail - The Problem with Screen-Based Coaching</h2>
         </motion.div>
 
         {/* Split Visual Comparison */}

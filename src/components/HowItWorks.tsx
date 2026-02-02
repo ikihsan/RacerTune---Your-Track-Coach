@@ -137,7 +137,14 @@ export function HowItWorks() {
   const isInView = useInView(sectionRef, { once: true, margin: '-100px' })
 
   return (
-    <section id="how-it-works" ref={sectionRef} className="relative py-32 lg:py-40">
+    <section 
+      id="how-it-works" 
+      ref={sectionRef} 
+      className="relative py-32 lg:py-40"
+      aria-labelledby="how-it-works-heading"
+      itemScope
+      itemType="https://schema.org/HowTo"
+    >
       {/* Background */}
       <div className="absolute inset-0 bg-carbon-950" />
       <div className="absolute inset-0 grid-overlay opacity-20" />
@@ -153,10 +160,14 @@ export function HowItWorks() {
           <span className="inline-block px-4 py-1.5 text-xs font-mono tracking-wider uppercase text-steel-400 border border-subtle rounded-full mb-6">
             How It Works
           </span>
-          <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-semibold text-white mb-4">
+          <h2 
+            id="how-it-works-heading"
+            className="font-display text-3xl sm:text-4xl lg:text-5xl font-semibold text-white mb-4"
+            itemProp="name"
+          >
             Engineered, Not Guessed
           </h2>
-          <p className="text-steel-400 text-lg max-w-2xl mx-auto">
+          <p className="text-steel-400 text-lg max-w-2xl mx-auto" itemProp="description">
             Three core systems work together to provide accurate, physics-based guidance.
           </p>
         </motion.div>

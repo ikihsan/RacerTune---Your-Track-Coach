@@ -18,6 +18,10 @@ export function Hero() {
     <section
       ref={containerRef}
       className="relative min-h-screen flex items-center justify-center overflow-hidden"
+      id="hero"
+      aria-labelledby="hero-heading"
+      itemScope
+      itemType="https://schema.org/WPHeader"
     >
       {/* Background Grid */}
       <div className="absolute inset-0 grid-overlay opacity-40" />
@@ -55,9 +59,12 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
           className="font-display text-5xl sm:text-6xl lg:text-7xl xl:text-8xl font-bold tracking-tight mb-6"
+          id="hero-heading"
+          itemProp="headline"
         >
           <span className="text-white">Racer</span>
           <span className="text-gradient-orange">Tune</span>
+          <span className="sr-only"> - The World's First AI Race Engineer App</span>
         </motion.h1>
 
         {/* Subtitle */}
@@ -66,6 +73,7 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.4 }}
           className="font-display text-2xl sm:text-3xl lg:text-4xl text-white/90 mb-4"
+          itemProp="alternativeHeadline"
         >
           Your AI Race Engineer.
         </motion.p>
@@ -76,6 +84,7 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.5 }}
           className="text-xl sm:text-2xl text-racing-orange font-medium mb-6"
+          itemProp="description"
         >
           Trust over performance. Always.
         </motion.p>
@@ -95,6 +104,8 @@ export function Hero() {
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.7 }}
+            title="Learn how RacerTune AI race engineer works"
+            aria-label="See how RacerTune AI race engineering works"
           className="flex flex-col sm:flex-row items-center justify-center gap-4"
         >
           <a
@@ -119,6 +130,8 @@ export function Hero() {
           <a
             href="#early-access"
             className="px-8 py-4 rounded border border-steel-600 text-steel-400 font-medium text-base hover:border-racing-orange hover:text-racing-orange transition-colors duration-300"
+            title="Get early access to RacerTune AI race engineer"
+            aria-label="Join the early access list for RacerTune"
           >
             Join the Early Grid
           </a>

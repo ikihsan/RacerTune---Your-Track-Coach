@@ -6,14 +6,19 @@ export function Footer() {
   const currentYear = new Date().getFullYear()
 
   return (
-    <footer className="relative py-16 border-t border-subtle">
+    <footer 
+      className="relative py-16 border-t border-subtle"
+      role="contentinfo"
+      itemScope
+      itemType="https://schema.org/WPFooter"
+    >
       <div className="absolute inset-0 bg-carbon-950" />
 
       <div className="relative max-w-7xl mx-auto px-6 lg:px-8">
         <div className="flex flex-col md:flex-row items-center justify-between gap-8">
           {/* Logo */}
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8">
+          <div className="flex items-center gap-3" itemScope itemType="https://schema.org/Organization">
+            <div className="w-8 h-8" aria-hidden="true">
               <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
                 <path
                   d="M16 4L28 10V22L16 28L4 22V10L16 4Z"
@@ -28,21 +33,22 @@ export function Footer() {
                 />
               </svg>
             </div>
-            <span className="font-display font-semibold text-white">RacerTune</span>
+            <span className="font-display font-semibold text-white" itemProp="name">RacerTune</span>
+            <meta itemProp="url" content="https://racertune.com" />
           </div>
 
           {/* Links */}
-          <div className="flex items-center gap-8 text-sm">
-            <a href="#" className="text-steel-500 hover:text-white transition-colors">
+          <nav className="flex items-center gap-8 text-sm" aria-label="Footer navigation">
+            <a href="/privacy" className="text-steel-500 hover:text-white transition-colors" title="RacerTune Privacy Policy">
               Privacy
             </a>
-            <a href="#" className="text-steel-500 hover:text-white transition-colors">
+            <a href="/terms" className="text-steel-500 hover:text-white transition-colors" title="RacerTune Terms of Service">
               Terms
             </a>
-            <a href="#" className="text-steel-500 hover:text-white transition-colors">
+            <a href="mailto:support@racertune.com" className="text-steel-500 hover:text-white transition-colors" title="Contact RacerTune Support">
               Contact
             </a>
-          </div>
+          </nav>
 
           {/* Social */}
           <div className="flex items-center gap-4">
@@ -74,11 +80,19 @@ export function Footer() {
         {/* Bottom */}
         <div className="mt-12 pt-8 border-t border-subtle flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-steel-600 text-sm">
-            © {currentYear} RacerTune. All rights reserved.
+            © {currentYear} <span itemProp="copyrightHolder">RacerTune</span>. All rights reserved.
           </p>
           <p className="text-steel-700 text-xs font-mono">
-            Designed for closed-track use only.
+            <strong>Designed for closed-track use only.</strong> AI race engineer for track day enthusiasts.
           </p>
+        </div>
+        
+        {/* Hidden SEO content */}
+        <div className="sr-only">
+          <p>RacerTune is the world's first AI race engineer app, providing real-time voice coaching for track days and motorsport events. Our physics-based telemetry analysis helps drivers improve lap times safely.</p>
+          <address>
+            Contact us at <a href="mailto:support@racertune.com">support@racertune.com</a>
+          </address>
         </div>
       </div>
     </footer>

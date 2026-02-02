@@ -17,57 +17,70 @@ export function Navigation() {
   }, [])
 
   const navItems = [
-    { label: 'How It Works', href: '#how-it-works' },
-    { label: 'Safety', href: '#safety' },
-    { label: 'Technology', href: '#tech' },
+    { label: 'How It Works', href: '#how-it-works', title: 'Learn how RacerTune AI race engineer works' },
+    { label: 'Safety', href: '#safety', title: 'Our safety-first approach to race engineering' },
+    { label: 'Technology', href: '#tech', title: 'The technology behind RacerTune AI' },
   ]
 
   return (
-    <motion.nav
-      initial={{ y: -20, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
-      className={clsx(
-        'fixed top-0 left-0 right-0 z-50 transition-all duration-500',
-        scrolled ? 'bg-glass border-b border-subtle' : 'bg-transparent'
-      )}
-    >
-      <div className="max-w-7xl mx-auto px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 lg:h-20">
-          {/* Logo */}
-          <a href="#" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 relative">
-              <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
-                <path
-                  d="M16 4L28 10V22L16 28L4 22V10L16 4Z"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  className="text-steel-400 group-hover:text-racing-orange transition-colors duration-300"
-                />
-                <path
-                  d="M16 8L24 12V20L16 24L8 20V12L16 8Z"
-                  fill="currentColor"
-                  className="text-racing-orange"
-                />
-              </svg>
-            </div>
-            <span className="font-display font-semibold text-lg tracking-tight">
-              RacerTune
-            </span>
-          </a>
+    <header role="banner">
+      <motion.nav
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
+        className={clsx(
+          'fixed top-0 left-0 right-0 z-50 transition-all duration-500',
+          scrolled ? 'bg-glass border-b border-subtle' : 'bg-transparent'
+        )}
+        aria-label="Main navigation"
+        itemScope
+        itemType="https://schema.org/SiteNavigationElement"
+      >
+        <div className="max-w-7xl mx-auto px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 lg:h-20">
+            {/* Logo */}
+            <a 
+              href="/" 
+              className="flex items-center gap-2 group"
+              title="RacerTune - AI Race Engineer Home"
+              aria-label="RacerTune Home"
+              itemProp="url"
+            >
+              <div className="w-8 h-8 relative" aria-hidden="true">
+                <svg viewBox="0 0 32 32" fill="none" className="w-full h-full" role="img" aria-label="RacerTune Logo">
+                  <path
+                    d="M16 4L28 10V22L16 28L4 22V10L16 4Z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    className="text-steel-400 group-hover:text-racing-orange transition-colors duration-300"
+                  />
+                  <path
+                    d="M16 8L24 12V20L16 24L8 20V12L16 8Z"
+                    fill="currentColor"
+                    className="text-racing-orange"
+                  />
+                </svg>
+              </div>
+              <span className="font-display font-semibold text-lg tracking-tight" itemProp="name">
+                RacerTune
+              </span>
+            </a>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center gap-8">
-            {navItems.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                className="text-sm text-steel-400 hover:text-white transition-colors duration-300"
-              >
-                {item.label}
-              </a>
-            ))}
-          </div>
+            {/* Desktop Navigation */}
+            <div className="hidden md:flex items-center gap-8" role="menubar">
+              {navItems.map((item) => (
+                <a
+                  key={item.label}
+                  href={item.href}
+                  title={item.title}
+                  className="text-sm text-steel-400 hover:text-white transition-colors duration-300"
+                  role="menuitem"
+                  itemProp="url"
+                >
+                  <span itemProp="name">{item.label}</span>
+                </a>
+              ))}
+            </div>
 
           {/* CTA */}
           <div className="hidden md:flex items-center gap-4">
@@ -144,5 +157,6 @@ export function Navigation() {
         )}
       </AnimatePresence>
     </motion.nav>
+  </header>
   )
 }

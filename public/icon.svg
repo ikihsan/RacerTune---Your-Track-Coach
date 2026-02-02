@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="orangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FF6B35"/>
+      <stop offset="100%" style="stop-color:#EA580C"/>
+    </linearGradient>
+    <linearGradient id="redGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#DC2626"/>
+      <stop offset="100%" style="stop-color:#FF6B35"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="512" height="512" fill="#0B0D10"/>
+  
+  <!-- R Letter with Racing Style -->
+  <path d="M180 140 L180 372 L220 372 L220 280 L260 280 L320 372 L370 372 L300 265 C340 250 360 215 360 175 C360 125 320 140 260 140 L180 140 Z M220 175 L250 175 C290 175 320 185 320 210 C320 235 295 245 255 245 L220 245 L220 175 Z" fill="url(#redGradient)"/>
+  
+  <!-- Heartbeat/Racing Line -->
+  <path d="M100 300 L160 300 L180 260 L210 340 L240 280 L270 300 L412 300" 
+        stroke="url(#orangeGradient)" 
+        stroke-width="8" 
+        stroke-linecap="round" 
+        stroke-linejoin="round"
+        fill="none"/>
+</svg>
