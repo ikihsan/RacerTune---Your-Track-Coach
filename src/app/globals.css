@@ -1,0 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --carbon-950: #0B0D10;
+  --carbon-900: #0F1115;
+  --racing-red: #DC2626;
+  --racing-orange: #EA580C;
+  --telemetry-cyan: #06B6D4;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--carbon-950);
+  color: #E5E7EB;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar - minimal, dark */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--carbon-950);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #25292E;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4B5563;
+}
+
+/* Selection color */
+::selection {
+  background-color: rgba(234, 88, 12, 0.3);
+  color: #fff;
+}
+
+/* Focus states for accessibility */
+:focus-visible {
+  outline: 2px solid var(--racing-orange);
+  outline-offset: 2px;
+}
+
+/* Utility classes */
+@layer components {
+  .text-gradient-orange {
+    background: linear-gradient(135deg, #EA580C 0%, #DC2626 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .border-subtle {
+    border-color: rgba(255, 255, 255, 0.06);
+  }
+
+  .bg-glass {
+    background: rgba(15, 17, 21, 0.8);
+    backdrop-filter: blur(12px);
+  }
+
+  .grid-overlay {
+    background-image: 
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  .telemetry-glow {
+    box-shadow: 0 0 40px rgba(6, 182, 212, 0.1);
+  }
+
+  .racing-line-glow {
+    filter: drop-shadow(0 0 8px rgba(234, 88, 12, 0.4));
+  }
+}
+
+/* Smooth transitions for interactive elements */
+a, button {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Canvas container for 3D */
+.canvas-container canvas {
+  touch-action: none;
+}
