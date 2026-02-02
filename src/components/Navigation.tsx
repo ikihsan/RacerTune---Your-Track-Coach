@@ -46,23 +46,39 @@ export function Navigation() {
               aria-label="RacerTune Home"
               itemProp="url"
             >
-              <div className="w-8 h-8 relative" aria-hidden="true">
-                <svg viewBox="0 0 32 32" fill="none" className="w-full h-full" role="img" aria-label="RacerTune Logo">
-                  <path
-                    d="M16 4L28 10V22L16 28L4 22V10L16 4Z"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    className="text-steel-400 group-hover:text-racing-orange transition-colors duration-300"
+              <div className="w-10 h-10 relative" aria-hidden="true">
+                <svg viewBox="0 0 100 100" fill="none" className="w-full h-full" role="img" aria-label="RacerTune Logo">
+                  <defs>
+                    <linearGradient id="navOrangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#FF6B35"/>
+                      <stop offset="100%" stopColor="#EA580C"/>
+                    </linearGradient>
+                    <linearGradient id="navRedGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#DC2626"/>
+                      <stop offset="100%" stopColor="#FF6B35"/>
+                    </linearGradient>
+                  </defs>
+                  {/* R Letter */}
+                  <path 
+                    d="M25 20 L25 80 L35 80 L35 55 L50 55 L65 80 L78 80 L60 52 C72 48 78 38 78 28 C78 18 68 20 50 20 L25 20 Z M35 28 L48 28 C60 28 68 32 68 40 C68 48 62 52 50 52 L35 52 L35 28 Z" 
+                    fill="url(#navRedGradient)"
+                    className="group-hover:opacity-90 transition-opacity duration-300"
                   />
-                  <path
-                    d="M16 8L24 12V20L16 24L8 20V12L16 8Z"
-                    fill="currentColor"
-                    className="text-racing-orange"
+                  {/* Heartbeat/Racing Line */}
+                  <path 
+                    d="M10 60 L22 60 L28 45 L38 75 L48 55 L55 60 L90 60" 
+                    stroke="url(#navOrangeGradient)" 
+                    strokeWidth="4" 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round"
+                    fill="none"
+                    className="group-hover:opacity-100 opacity-90 transition-opacity duration-300"
                   />
                 </svg>
               </div>
-              <span className="font-display font-semibold text-lg tracking-tight" itemProp="name">
-                RacerTune
+              <span className="font-display font-bold text-lg tracking-tight" itemProp="name">
+                <span className="text-white">RACER</span>
+                <span className="text-racing-orange">TUNE</span>
               </span>
             </a>
 

@@ -18,22 +18,38 @@ export function Footer() {
         <div className="flex flex-col md:flex-row items-center justify-between gap-8">
           {/* Logo */}
           <div className="flex items-center gap-3" itemScope itemType="https://schema.org/Organization">
-            <div className="w-8 h-8" aria-hidden="true">
-              <svg viewBox="0 0 32 32" fill="none" className="w-full h-full">
-                <path
-                  d="M16 4L28 10V22L16 28L4 22V10L16 4Z"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  className="text-steel-600"
+            <div className="w-10 h-10" aria-hidden="true">
+              <svg viewBox="0 0 100 100" fill="none" className="w-full h-full">
+                <defs>
+                  <linearGradient id="footerOrangeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#FF6B35"/>
+                    <stop offset="100%" stopColor="#EA580C"/>
+                  </linearGradient>
+                  <linearGradient id="footerRedGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#DC2626"/>
+                    <stop offset="100%" stopColor="#FF6B35"/>
+                  </linearGradient>
+                </defs>
+                {/* R Letter */}
+                <path 
+                  d="M25 20 L25 80 L35 80 L35 55 L50 55 L65 80 L78 80 L60 52 C72 48 78 38 78 28 C78 18 68 20 50 20 L25 20 Z M35 28 L48 28 C60 28 68 32 68 40 C68 48 62 52 50 52 L35 52 L35 28 Z" 
+                  fill="url(#footerRedGradient)"
                 />
-                <path
-                  d="M16 8L24 12V20L16 24L8 20V12L16 8Z"
-                  fill="currentColor"
-                  className="text-racing-orange"
+                {/* Heartbeat/Racing Line */}
+                <path 
+                  d="M10 60 L22 60 L28 45 L38 75 L48 55 L55 60 L90 60" 
+                  stroke="url(#footerOrangeGradient)" 
+                  strokeWidth="4" 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round"
+                  fill="none"
                 />
               </svg>
             </div>
-            <span className="font-display font-semibold text-white" itemProp="name">RacerTune</span>
+            <span className="font-display font-bold text-white" itemProp="name">
+              <span className="text-white">RACER</span>
+              <span className="text-racing-orange">TUNE</span>
+            </span>
             <meta itemProp="url" content="https://racertune.com" />
           </div>
 
